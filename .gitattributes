@@ -1,0 +1,17 @@
+# Normalise text files in the repository to LF, and check them out per platform.
+* text=auto eol=lf
+
+# The launcher and fixtures are read by Windows tooling, so they must be CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never rewrite these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.wasm binary
+*.gz binary

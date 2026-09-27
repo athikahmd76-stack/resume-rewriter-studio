@@ -1,0 +1,57 @@
+{
+  "name": "resume-rewriter-studio",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Local-first, client-side resume rewriting, ATS analysis and document export studio. No backend, no API, no tracking.",
+  "license": "MIT",
+  "keywords": [
+    "resume",
+    "ats",
+    "cover-letter",
+    "pdf",
+    "docx",
+    "local-first",
+    "privacy",
+    "offline"
+  ],
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "start": "node scripts/launch.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "test": "node scripts/smoke.mjs",
+    "test:browser": "npm run build && node scripts/browser-check.mjs",
+    "test:parser": "node scripts/parser-check.mjs",
+    "test:upload": "npm run build && node scripts/upload-check.mjs",
+    "verify": "npm run lint && npm run test && npm run test:parser && npm run test:browser && npm run test:upload"
+  },
+  "dependencies": {
+    "docx": "^9.5.1",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^3.0.1",
+    "lucide-react": "^0.544.0",
+    "mammoth": "^1.11.0",
+    "pdfjs-dist": "^5.4.149",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "tesseract.js": "^6.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.4",
+    "@xmldom/xmldom": "^0.8.15",
+    "eslint": "^9.36.0",
+    "eslint-plugin-react-hooks": "^6.1.1",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.4.0",
+    "playwright": "^1.63.0",
+    "vite": "^7.1.7"
+  }
+}

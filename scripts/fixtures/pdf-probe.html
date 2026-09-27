@@ -1,0 +1,115 @@
+<!doctype html>
+<!--
+  In-browser half of the layout-matrix parser check. Vite serves this page and
+  rewrites the bare imports, so the real app modules run exactly as they do in
+  the app. Node drives it from scripts/parser-check.mjs.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PDF layout probe</title>
+  </head>
+  <body>
+    <pre id="out">idle</pre>
+    <script type="module">
+      import { jsPDF } from 'jspdf';
+      import { parsePdf, pdfToDocument } from '/src/services/pdfParser.js';
+      import { structureDocument, runPipeline } from '/src/services/pipeline.js';
+      import { resumeToText } from '/src/services/resumeModel.js';
+      import { FIXTURES, JD, withSurrounds } from './layouts.mjs';
+
+      // pt sizes per line kind - headers are bigger, body and wrapped lines match
+      const SIZE = { name: 20, title: 12, contact: 9, h: 13, sub: 11, role: 11.5, meta: 9.5, dates: 9.5, b: 9.5, cont: 9.5, plain: 9.5 };
+      const BOLD = new Set(['name', 'title', 'h', 'sub', 'role']);
+      const BULLET_X = 18;
+      const TEXT_X = 24;
+
+      const buildPdf = (lines) => {
+        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+        let y = 20;
+        const ensure = (need) => { if (y + need > 280) { doc.addPage(); y = 20; } };
+        for (const line of lines) {
+          doc.setFont('helvetica', BOLD.has(line.t) ? 'bold' : 'normal');
+          doc.setFontSize(SIZE[line.t] ?? 10);
+          if (line.t === 'b') {
+            // real PDFs break a long bullet across visual lines, so use the same
+            // wrapping the reader sees and draw the marker once
+            const parts = doc.splitTextToSize(line.text, 210 - TEXT_X - 18);
+            ensure(parts.length * 5 + 2);
+            doc.text('-', BULLET_X, y);
+            doc.text(parts, TEXT_X, y);
+            y += parts.length * 5 + 1.2;
+          } else if (line.t === 'cont') {
+            const parts = doc.splitTextToSize(line.text, 210 - TEXT_X - 18);
+            ensure(parts.length * 5 + 1.2);
+            doc.text(parts, TEXT_X, y);
+            y += parts.length * 5 + 1.2;
+          } else {
+            ensure(7);
+            doc.text(line.text, line.t === 'name' || line.t === 'title' || line.t === 'contact' ? BULLET_X : TEXT_X, y);
+            y += (line.t === 'name' || line.t === 'title' ? 8 : 5.4);
+          }
+        }
+        return doc.output('arraybuffer');
+      };
+
+      const summarise = (resume) => ({
+        personal: {
+          name: resume.personal?.name || '',
+          email: resume.personal?.email || '',
+          phone: resume.personal?.phone || '',
+        },
+        experience: (resume.experience || []).map((e) => ({
+          role: e.role || '',
+          company: e.company || '',
+          dates: e.dates || '',
+          notes: e.notes || '',
+          bullets: [...(e.responsibilities || []), ...(e.achievements || [])],
+        })),
+        projects: (resume.projects || []).length,
+        skillsItems: (resume.skills || []).reduce((n, g) => n + (g.items?.length || 0), 0),
+        summary: resume.summary || '',
+      });
+
+      const DEBUG = new URLSearchParams(location.search).has('debug');
+
+      const runFixture = async (fixture) => {
+        const bytes = buildPdf(withSurrounds(fixture.doc));
+        const file = new File([new Uint8Array(bytes)], 'fixture.pdf', { type: 'application/pdf' });
+        const parsed = pdfToDocument(await parsePdf(file, () => {}));
+        const { resume, diagnostics, layout } = structureDocument(parsed);
+        const result = { id: fixture.id, ...summarise(resume), diagnostics };
+        // a job that survives parsing but is split by the rewrite is the same bug
+        // from the user's side, so the real upload path runs here too
+        const out = await runPipeline({ file, jobDescription: JD, onProgress: () => {} });
+        const text = resumeToText(out.optimizedResume).toLowerCase();
+        result.rewriteJobs = out.optimizedResume.experience.length;
+        result.lostCompanies = [...new Set((resume.experience || []).map((e) => (e.company || '').toLowerCase()).filter(Boolean))]
+          .filter((c) => !text.includes(c));
+        if (DEBUG) {
+          // only when asked (?debug=1) - the raw text geometry that decided the model
+          result.lines = parsed.pages.flatMap((p) => p.lines.map((l) => `${l.y.toFixed(0)} x${l.x.toFixed(0)} ${l.fontSize} ${l.bold ? 'B' : ' '} ${l.text}`));
+          result.blocks = parsed.blocks.map((b) => `${b.type} ${b.fontSize} ${b.text.slice(0, 70)}`);
+          result.sections = (layout?.sections || []).map((s) => `${s.id}:${s.lineCount ?? ''}`).join(' ');
+          result.blockSections = (parsed.blocks || []).map((b) => b.section || '-').join(',');
+        }
+        return result;
+      };
+
+      window.runAll = async () => {
+        const results = [];
+        for (const fixture of FIXTURES) {
+          try {
+            results.push(await runFixture(fixture));
+          } catch (error) {
+            results.push({ id: fixture.id, error: String(error && error.message ? error.message : error) });
+          }
+        }
+        return results;
+      };
+
+      document.getElementById('out').textContent = 'ready';
+      window.probeReady = true;
+    </script>
+  </body>
+</html>

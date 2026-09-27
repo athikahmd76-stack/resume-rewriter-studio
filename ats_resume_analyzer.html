@@ -1,0 +1,1443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATS Resume Analyzer &amp; Job Match Tool</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#1e293b; --panel2:#243447; --line:#334155;
+    --txt:#e2e8f0; --muted:#94a3b8; --accent:#22d3ee; --accent2:#818cf8;
+    --green:#34d399; --red:#f87171; --amber:#fbbf24; --white:#f8fafc;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--txt); line-height:1.55;}
+  .wrap{max-width:1180px; margin:0 auto; padding:24px 18px 80px;}
+  header.hero{text-align:center; padding:18px 0 26px;}
+  header.hero h1{font-size:30px; letter-spacing:.3px; background:linear-gradient(90deg,var(--accent),var(--accent2)); -webkit-background-clip:text; background-clip:text; color:transparent;}
+  header.hero p{color:var(--muted); margin-top:8px; font-size:14.5px; max-width:760px; margin-left:auto; margin-right:auto;}
+  .badge{display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; margin:0 3px 6px 0;}
+  .b-cyan{background:rgba(34,211,238,.15); color:var(--accent); border:1px solid rgba(34,211,238,.35);}
+  .b-violet{background:rgba(129,140,248,.15); color:var(--accent2); border:1px solid rgba(129,140,248,.35);}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:18px;}
+  @media(max-width:880px){.grid{grid-template-columns:1fr;}}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; box-shadow:0 6px 22px rgba(0,0,0,.25);}
+  .card h2{font-size:16px; margin-bottom:12px; display:flex; align-items:center; gap:8px;}
+  .dot{width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px rgba(34,211,238,.2);}
+  label.field{display:block; font-size:12px; color:var(--muted); margin:10px 0 5px; font-weight:600; letter-spacing:.4px;}
+  textarea, input[type=text]{width:100%; background:var(--panel2); color:var(--txt); border:1px solid var(--line); border-radius:9px; padding:10px 12px; font-size:13.5px; font-family:'Segoe UI',sans-serif; resize:vertical; outline:none;}
+  textarea:focus, input[type=text]:focus{border-color:var(--accent); box-shadow:0 0 0 2px rgba(34,211,238,.15);}
+  textarea{min-height:150px;}
+  .filebtn{display:inline-block; cursor:pointer; background:rgba(34,211,238,.12); color:var(--accent); border:1px dashed rgba(34,211,238,.5); border-radius:9px; padding:9px 14px; font-size:13px; font-weight:600; transition:.18s;}
+  .filebtn:hover{background:rgba(34,211,238,.2);}
+  input[type=file]{display:none;}
+  .row{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .or{color:var(--muted); font-size:12px;}
+  .chips{display:flex; flex-wrap:wrap; gap:7px; margin-top:10px;}
+  .chip{background:rgba(129,140,248,.15); border:1px solid rgba(129,140,248,.4); color:var(--accent2); padding:4px 11px; border-radius:999px; font-size:12.5px; display:inline-flex; align-items:center; gap:6px;}
+  .chip button{border:none; background:none; color:var(--red); cursor:pointer; font-size:14px; line-height:1;}
+  .addskill{display:flex; gap:8px; margin-top:8px;}
+  .addskill input{flex:1;}
+  .btn{border:none; cursor:pointer; border-radius:10px; padding:12px 20px; font-size:15px; font-weight:700; transition:.18s;}
+  .btn-primary{background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#08131f;}
+  .btn-primary:hover{filter:brightness(1.1); transform:translateY(-1px); box-shadow:0 8px 20px rgba(34,211,238,.25);}
+  .btn-sm{padding:8px 13px; font-size:13px; border-radius:8px;}
+  .btn-ghost{background:rgba(148,163,184,.12); color:var(--txt); border:1px solid var(--line);}
+  .btn-ghost:hover{background:rgba(148,163,184,.22);}
+  .center{text-align:center;}
+  .mt{margin-top:14px;}
+  .hidden{display:none !important;}
+
+  /* score area */
+  #results{margin-top:26px;}
+  .score-grid{display:grid; grid-template-columns:220px 1fr; gap:20px; align-items:center;}
+  @media(max-width:700px){.score-grid{grid-template-columns:1fr; text-align:center;}}
+  .gauge{width:190px; height:190px; border-radius:50%; display:flex; align-items:center; justify-content:center; margin:0 auto; position:relative;}
+  .gauge-inner{width:150px; height:150px; border-radius:50%; background:var(--panel); display:flex; flex-direction:column; align-items:center; justify-content:center;}
+  .gauge-val{font-size:40px; font-weight:800;}
+  .gauge-lbl{font-size:12px; color:var(--muted); letter-spacing:1px; text-transform:uppercase;}
+  .verdict{font-size:17px; font-weight:700; margin-top:6px;}
+  .sub{color:var(--muted); font-size:13.5px; margin-top:6px;}
+  .statcols{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:16px;}
+  @media(max-width:700px){.statcols{grid-template-columns:repeat(2,1fr);}}
+  .stat{background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:12px; text-align:center;}
+  .stat b{display:block; font-size:24px;}
+  .stat span{font-size:12px; color:var(--muted);}
+
+  .sec{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-top:16px;}
+  .sec h3{font-size:15px; margin-bottom:12px;}
+  .pill{display:inline-block; padding:3px 10px; border-radius:7px; font-size:12.5px; margin:3px 4px 3px 0; font-weight:600;}
+  .p-hit{background:rgba(52,211,153,.14); color:var(--green); border:1px solid rgba(52,211,153,.35);}
+  .p-miss{background:rgba(248,113,113,.14); color:var(--red); border:1px solid rgba(248,113,113,.35);}
+  .p-extra{background:rgba(148,163,184,.14); color:var(--muted); border:1px solid rgba(148,163,184,.3);}
+  .p-self{background:rgba(251,191,36,.14); color:var(--amber); border:1px solid rgba(251,191,36,.35);}
+  .cat-tag{display:inline-block; font-size:11px; color:var(--accent2); text-transform:uppercase; letter-spacing:.6px; margin:10px 8px 4px 0; font-weight:700;}
+
+  table{width:100%; border-collapse:collapse; font-size:13.5px;}
+  th,td{padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle;}
+  th{color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.5px; background:var(--panel2);}
+  tr:hover td{background:rgba(148,163,184,.05);}
+  .tag{font-size:11.5px; font-weight:700; padding:2px 8px; border-radius:6px;}
+  .t-yes{background:rgba(52,211,153,.15); color:var(--green);}
+  .t-no{background:rgba(248,113,113,.15); color:var(--red);}
+  .t-part{background:rgba(251,191,36,.15); color:var(--amber);}
+  .kw{border:1px solid var(--line); border-radius:8px; padding:3px 9px; margin:3px 5px 3px 0; font-size:12.5px; display:inline-block;}
+  .kw-found{background:rgba(52,211,153,.12); border-color:rgba(52,211,153,.4); color:var(--green);}
+  .kw-miss{border-color:rgba(248,113,113,.4); color:var(--red);}
+  .ok{color:var(--green);}
+  .no{color:var(--red);}
+  .note{font-size:12.5px; color:var(--muted); margin-top:8px;}
+  .toolbar{display:flex; gap:10px; flex-wrap:wrap; margin-top:14px;}
+  .report-pre{white-space:pre-wrap; font-family:'Consolas','Courier New',monospace; background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:14px; font-size:13px; max-height:420px; overflow:auto;}
+  .pv-tabs{display:flex; gap:8px; margin-bottom:12px;}
+  .pv-tab{background:rgba(148,163,184,.12); color:var(--muted); border:1px solid var(--line); border-radius:8px; padding:7px 14px; font-size:13px; cursor:pointer; font-weight:600; transition:.15s;}
+  .pv-tab:hover{background:rgba(148,163,184,.22);}
+  .pv-tab.active{background:var(--panel2); color:var(--accent); border-color:rgba(34,211,238,.55);}
+  #resumePreview{width:100%; max-height:560px; overflow:auto; padding:16px; background:#0b1526; border:1px solid var(--line); border-radius:10px; box-sizing:border-box;}
+  .pv-sheet{background:#ffffff; color:#222222; font-family:Calibri,'Aptos',Arial,Helvetica,sans-serif; width:min(816px,100%); min-width:320px; min-height:1056px; padding:48px 54px; margin:0 auto; box-shadow:0 2px 14px rgba(15,23,42,.18); border:1px solid #d7dee8; border-radius:2px; box-sizing:border-box; text-align:left; line-height:1.42; font-size:10.5px;}
+  .pv-name{font-size:17px; font-weight:700; letter-spacing:1px; color:#1F3864; text-align:center; text-transform:uppercase; line-height:1.2;}
+  .pv-headline{font-size:10.5px; color:#222222; text-align:center; margin-top:4px;}
+  .pv-contact{font-size:10.5px; color:#222222; text-align:center; margin-top:4px;}
+  .pv-heading{font-size:10.5px; font-weight:700; letter-spacing:.8px; color:#1F3864; text-transform:uppercase; border-bottom:1px solid #1F3864; padding-bottom:2px; margin:15px 0 6px;}
+  .pv-body{font-size:10.5px; color:#222222; margin:5px 0; line-height:1.4;}
+  .pv-skill{font-size:10.5px; color:#222222; margin:6px 0; line-height:1.4;}
+  .pv-bullet{font-size:10.5px; color:#222222; margin:3px 0; padding-left:14px; position:relative; line-height:1.4;}
+  .pv-marker{position:absolute; left:2px; top:0; color:#222222;}
+  .pv-job{font-size:10.5px; font-weight:700; color:#222222; margin:9px 0 1px;}
+  .pv-meta{font-size:10.5px; font-style:italic; color:#222222; margin:0 0 5px;}
+  .pv-meta-row{display:flex; flex-wrap:wrap; justify-content:space-between; gap:0 18px;}
+  .pv-meta-l{flex:1 1 200px;}
+  .pv-meta-r{flex:0 0 auto; text-align:right; white-space:nowrap;}
+  .pv-proj{font-size:10.5px; color:#222222; margin:7px 0 3px; line-height:1.4;}
+  .pv-proj b{color:#222222;}
+  .flex-between{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;}
+  footer{color:var(--muted); font-size:12.5px; text-align:center; margin-top:34px; border-top:1px solid var(--line); padding-top:16px;}
+  .milli{color:var(--accent);}
+  ol.steps{margin:10px 0 4px 18px; color:var(--muted); font-size:13.5px;}
+  ol.steps li{margin:3px 0;}
+  summary{cursor:pointer; color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <h1>ATS Resume Analyzer &amp; Job Match</h1>
+    <p>Upload or paste your resume, paste the job description, add recent skills — and get an honest ATS-style match score, strengths, gaps, a reorganized ATS-friendly resume (built only from your real content), and a downloadable report.</p>
+    <div style="margin-top:12px;">
+      <span class="badge b-cyan">PDF / DOCX / TXT upload</span>
+      <span class="badge b-cyan">Copy-paste input</span>
+      <span class="badge b-violet">100% on your device</span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- RESUME -->
+    <div class="card">
+      <h2><span class="dot"></span> Your Resume</h2>
+      <label class="field">Upload resume file (PDF or DOCX, or TXT)</label>
+      <div class="row">
+        <label class="filebtn" for="resumeFile">Upload Resume File</label>
+        <input type="file" id="resumeFile" accept=".pdf,.docx,.txt">
+        <span class="or">or</span>
+      </div>
+      <label class="field">Paste resume text (this also shows parsed file content)</label>
+      <textarea id="resumeText" placeholder="Paste your resume here, or upload a file and edit the extracted text..."></textarea>
+      <div class="chips" id="extraChips"></div>
+      <div class="addskill">
+        <input type="text" id="addSkillInput" placeholder="Recent skill you just learned, e.g. Power BI">
+        <button class="btn btn-sm btn-ghost" onclick="addSkill()">Add</button>
+      </div>
+    </div>
+
+    <!-- JOB DESCRIPTION -->
+    <div class="card">
+      <h2><span class="dot" style="background:var(--accent2); box-shadow:0 0 0 3px rgba(129,140,248,.2);"></span> Job Description</h2>
+      <label class="field">Optionally upload a JD file too (PDF/DOCX/TXT)</label>
+      <div class="row">
+        <label class="filebtn" for="jdFile">Upload JD File</label>
+        <input type="file" id="jdFile" accept=".pdf,.docx,.txt">
+      </div>
+      <label class="field">Paste the job description here</label>
+      <textarea id="jdText" placeholder="Paste the full job description, including responsibilities and requirements..."></textarea>
+      <div class="note">Tip: paste the <b>whole</b> JD — more keywords = more accurate match analysis.</div>
+    </div>
+  </div>
+
+  <div class="center mt">
+    <button class="btn btn-primary" id="analyzeBtn" onclick="analyze()">Analyze My Match for This Job</button>
+  </div>
+
+  <!-- RESULTS -->
+  <div id="results" class="hidden">
+    <div class="score-grid">
+      <div class="gauge" id="gauge"><div class="gauge-inner"><div class="gauge-val" id="scoreVal">0%</div><div class="gauge-lbl">Match</div></div></div>
+      <div>
+        <div class="verdict" id="verdict">--</div>
+        <div class="sub" id="scoreSub">--</div>
+        <div class="statcols">
+          <div class="stat"><b class="ok" id="sMatched">0</b><span>Skills Matched</span></div>
+          <div class="stat"><b class="no" id="sMissing">0</b><span>Missing JD Skills</span></div>
+          <div class="stat" style="color:var(--muted)" id="sExtraWrap"><b id="sExtra">0</b><span>Extra Skills</span></div>
+          <div class="stat" style="color:var(--amber)" id="sSelfWrap"><b id="sSelf">0</b><span>Self-Verified</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="flex-between"><h3>Skills Checklist Against the JD</h3>
+        <span class="note">Tick "I have it" for skills you genuinely know but that aren't written on your resume — this updates your score live (self-verified).</span>
+      </div>
+      <div style="overflow:auto;"><table id="checkTable"><thead><tr><th>Skill</th><th>Category</th><th>Required by JD</th><th>Found in Resume</th><th>Confirm I have it</th></tr></thead><tbody id="checkBody"></tbody></table></div>
+    </div>
+
+    <div class="sec">
+      <h3>Where You Are Strong</h3>
+      <div id="strengths"></div>
+      <h3 style="margin-top:16px;">Where You Are Weak (gaps vs. this JD)</h3>
+      <div id="weaknesses"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Keyword Coverage in the Job Description</h3>
+      <p class="note">Top recurring keywords from the JD. Green = also found on your resume. Red = absent.</p>
+      <div id="kwCloud" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Key Words Suggested (Copy & Paste into Your Resume)</h3>
+      <p class="note">These are the exact keywords and skills from the job description. Add the ones you genuinely possess to your resume's Skills, Summary, and Experience sections. Do not fabricate — only include what you can demonstrate.</p>
+      <div id="keywordsSuggested" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Where to Improve Your Resume (Based on This JD)</h3>
+      <p class="note">Specific, actionable gaps — no fabrication. Only add items you can back up in an interview.</p>
+      <div id="improvementAreas" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="center mt">
+      <button class="btn btn-primary" onclick="downloadReport()">Download Complete Match Report</button>
+      <button class="btn btn-ghost btn-sm" style="margin-left:8px;" onclick="printReport()">Print / Save as PDF</button>
+    </div></div>
+  </div>
+
+  <footer>
+    Runs 100% in your browser — nothing is uploaded to any server. Extraction support by <span class="milli">PDF.js</span> and <span class="milli">Mammoth.js</span>.
+    This tool estimates a match using keyword &amp; skill overlap; it is not the same ATS an employer uses, so treat scores as guidance, not gospel.
+  </footer>
+</div>
+
+<script>
+/* ---------------- STOPWORDS ---------------- */
+const STOPWORDS = new Set(("a an and are as at be by for from has have he her his in is it its of on or she that the their them they this to was were with which who will would into more than these those our your you we not no can could should about over after before between during each few from further also had having been but what when where how all any both do does did done just".split(" ")));
+
+/* ---------------- SKILL DICTIONARY ---------------- */
+const SKILLS = [
+  // Programming & web
+  ["python","Programming"],["javascript","Programming"],["typescript","Programming"],["java","Programming"],
+  ["c++","Programming"],["c#","Programming"],["php","Programming"],["ruby","Programming"],["golang","Programming"],
+  ["go (language)","Programming"],["rust","Programming"],["swift","Programming"],["kotlin","Programming"],
+  ["scala","Programming"],["r (statistics)","Programming"],["html","Programming"],["css","Programming"],
+  ["sass","Programming"],["less","Programming"],["sql","Data & Databases"],["nosql","Data & Databases"],
+  ["react","Frontend"],["react.js","Frontend"],["react native","Frontend"],["vue.js","Frontend"],["angular","Frontend"],
+  ["angularjs","Frontend"],["next.js","Frontend"],["node.js","Backend"],["express.js","Backend"],["django","Backend"],
+  ["flask","Backend"],["spring boot","Backend"],["spring framework","Backend"],["laravel","Backend"],
+  ["ruby on rails","Backend"],["asp.net","Backend"],[".net core","Backend"],["jquery","Frontend"],
+  ["bootstrap","Frontend"],["tailwind css","Frontend"],["redux","Frontend"],["graphql","API & Backend"],
+  ["rest api","API & Backend"],["webpack","Frontend"],["babel","Frontend"],["flutter","Mobile"],["dart","Mobile"],
+  ["ios development","Mobile"],["android development","Mobile"],["swiftui","Mobile"],
+  // Testing / QA
+  ["jest","Testing & QA"],["pytest","Testing & QA"],["mocha","Testing & QA"],["cypress","Testing & QA"],
+  ["selenium","Testing & QA"],["unit testing","Testing & QA"],["integration testing","Testing & QA"],
+  ["test automation","Testing & QA"],["manual testing","Testing & QA"],["quality assurance","Testing & QA"],
+  ["qa","Testing & QA"],["performance testing","Testing & QA"],["security testing","Testing & QA"],
+  ["load testing","Testing & QA"],["end to end testing","Testing & QA"],
+  // DevOps / Cloud / Infra
+  ["docker","DevOps & Cloud"],["kubernetes","DevOps & Cloud"],["terraform","DevOps & Cloud"],["ansible","DevOps & Cloud"],
+  ["jenkins","DevOps & Cloud"],["ci/cd","DevOps & Cloud"],["git","DevOps & Cloud"],["github","DevOps & Cloud"],
+  ["gitlab","DevOps & Cloud"],["aws","DevOps & Cloud"],["amazon web services","DevOps & Cloud"],
+  ["azure","DevOps & Cloud"],["google cloud","DevOps & Cloud"],["gcp","DevOps & Cloud"],["firebase","DevOps & Cloud"],
+  ["serverless","DevOps & Cloud"],["linux","DevOps & Cloud"],["unix","DevOps & Cloud"],["bash","DevOps & Cloud"],
+  ["powershell","DevOps & Cloud"],["shell scripting","DevOps & Cloud"],["devops","DevOps & Cloud"],
+  ["microservices","DevOps & Cloud"],["cloud computing","DevOps & Cloud"],["aws lambda","DevOps & Cloud"],
+  ["ec2","DevOps & Cloud"],["s3","DevOps & Cloud"],["dynamodb","Data & Databases"],
+  // Data & ML
+  ["machine learning","Data Science & AI"],["deep learning","Data Science & AI"],["artificial intelligence","Data Science & AI"],
+  ["nlp","Data Science & AI"],["natural language processing","Data Science & AI"],["computer vision","Data Science & AI"],
+  ["pytorch","Data Science & AI"],["tensorflow","Data Science & AI"],["keras","Data Science & AI"],
+  ["scikit-learn","Data Science & AI"],["pandas","Data Science & AI"],["numpy","Data Science & AI"],
+  ["matplotlib","Data Science & AI"],["data science","Data & Databases"],["data analysis","Data & Databases"],
+  ["data analytics","Data & Databases"],["data engineering","Data & Databases"],["big data","Data & Databases"],
+  ["hadoop","Data & Databases"],["spark","Data & Databases"],["apache spark","Data & Databases"],["kafka","Data & Databases"],
+  ["etl","Data & Databases"],["data pipeline","Data & Databases"],["data modeling","Data & Databases"],
+  ["mysql","Data & Databases"],["postgresql","Data & Databases"],["mongodb","Data & Databases"],["redis","Data & Databases"],
+  ["elasticsearch","Data & Databases"],["sql server","Data & Databases"],["oracle","Data & Databases"],
+  ["tableau","Analytics & BI"],["power bi","Analytics & BI"],["excel","Analytics & BI"],["looker","Analytics & BI"],
+  ["google analytics","Analytics & BI"],["looker studio","Analytics & BI"],["snowflake","Data & Databases"],
+  ["erp","Business & Finance"],["sap","Business & Finance"],["crm","Business & Finance"],
+  // Security
+  ["cybersecurity","Security"],["information security","Security"],["network security","Security"],
+  ["cloud security","Security"],["penetration testing","Security"],["ethical hacking","Security"],
+  ["siem","Security"],["owasp","Security"],["zero trust","Security"],
+  // Design / UX
+  ["ux design","Design & UX"],["ui design","Design & UX"],["user experience","Design & UX"],["user interface","Design & UX"],
+  ["wireframing","Design & UX"],["prototyping","Design & UX"],["figma","Design & UX"],["sketch","Design & UX"],
+  ["adobe photoshop","Design & UX"],["adobe illustrator","Design & UX"],["adobe xd","Design & UX"],
+  ["photoshop","Design & UX"],["illustrator","Design & UX"],["indesign","Design & UX"],["canva","Design & UX"],
+  ["autocad","Engineering & Design"],["revit","Engineering & Design"],["solidworks","Engineering & Design"],["matlab","Engineering & Design"],
+  ["graphic design","Design & UX"],["design thinking","Design & UX"],["responsive design","Design & UX"],
+  // Product / Project / Business
+  ["project management","Project & Product"],["agile","Project & Product"],["scrum","Project & Product"],
+  ["kanban","Project & Product"],["jira","Project & Product"],["trello","Project & Product"],
+  ["product management","Project & Product"],["product owner","Project & Product"],["product roadmap","Project & Product"],
+  ["business analysis","Business & Finance"],["business analytics","Business & Finance"],["requirements gathering","Business & Finance"],
+  ["stakeholder management","Leadership & Soft"],["stakeholder communication","Leadership & Soft"],["sdlc","Project & Product"],
+  ["waterfall","Project & Product"],["lean","Project & Product"],["six sigma","Business & Finance"],
+  ["process improvement","Business & Finance"],["sql reporting","Analytics & BI"],
+  // Marketing
+  ["seo","Marketing"],["sem","Marketing"],["search engine optimization","Marketing"],["content marketing","Marketing"],
+  ["email marketing","Marketing"],["social media marketing","Marketing"],["digital marketing","Marketing"],
+  ["ppc","Marketing"],["google ads","Marketing"],["facebook ads","Marketing"],["marketing automation","Marketing"],
+  ["ab testing","Marketing"],["a/b testing","Marketing"],["conversion rate optimization","Marketing"],["copywriting","Marketing"],
+  ["brand management","Marketing"],["market research","Marketing"],["customer segmentation","Marketing"],
+  ["lead generation","Marketing"],["hubspot","Marketing"],["mailchimp","Marketing"],["public relations","Marketing"],
+  // Finance & HR & Operations
+  ["financial analysis","Business & Finance"],["financial modeling","Business & Finance"],["budgeting","Business & Finance"],
+  ["forecasting","Business & Finance"],["accounting","Business & Finance"],["bookkeeping","Business & Finance"],
+  ["taxation","Business & Finance"],["audit","Business & Finance"],["risk management","Business & Finance"],
+  ["investment banking","Business & Finance"],["equity research","Business & Finance"],["valuation","Business & Finance"],
+  ["procurement","Operations & HR"],["supply chain","Operations & HR"],["logistics","Operations & HR"],
+  ["operations management","Operations & HR"],["hr","Operations & HR"],["human resources","Operations & HR"],
+  ["recruiting","Operations & HR"],["talent acquisition","Operations & HR"],["onboarding","Operations & HR"],
+  ["payroll","Operations & HR"],["benefits administration","Operations & HR"],["employee engagement","Operations & HR"],
+  ["performance management","Operations & HR"],["workday","Operations & HR"],["sap successfactors","Operations & HR"],
+  ["hamilton chat assistant","Operations & HR"],
+  // ML / AI / Emerging
+  ["generative ai","Data Science & AI"],["llm","Data Science & AI"],["large language models","Data Science & AI"],
+  ["prompt engineering","Data Science & AI"],["rag","Data Science & AI"],["retrieval augmented generation","Data Science & AI"],
+  ["chatgpt","Data Science & AI"],["openai api","Data Science & AI"],["vector databases","Data & Databases"],
+  ["langchain","Data Science & AI"],["opencv","Data Science & AI"],["yolo","Data Science & AI"],
+  ["time series forecasting","Data Science & AI"],["recommendation systems","Data Science & AI"],
+  ["statistical analysis","Data Science & AI"],["hypothesis testing","Data Science & AI"],["a/b testing and experimentation","Marketing"],
+  // Certifications
+  ["aws certified solutions architect","Certifications"],["aws certified developer","Certifications"],
+  ["aws certified","Certifications"],["microsoft azure certified","Certifications"],["pmp","Certifications"],
+  ["project management professional","Certifications"],["certified scrum master","Certifications"],["csm","Certifications"],
+  ["cpa","Certifications"],["cfa","Certifications"],["comptia security+","Certifications"],["comptia network+","Certifications"],
+  ["ccna","Certifications"],["ccie","Certifications"],["ceh","Certifications"],["oscp","Certifications"],
+  ["google analytics certification","Certifications"],["tableau desktop specialist","Certifications"],
+  ["istqb","Certifications"],["mcsa","Certifications"],["az-900","Certifications"],
+
+  // Leadership / soft skills (only counted if the JD explicitly asks)
+  ["leadership","Leadership & Soft"],["team leadership","Leadership & Soft"],["team management","Leadership & Soft"],
+  ["time management","Leadership & Soft"],["communication skills","Leadership & Soft"],["written communication","Leadership & Soft"],
+  ["verbal communication","Leadership & Soft"],["presentation skills","Leadership & Soft"],["public speaking","Leadership & Soft"],
+  ["problem solving","Leadership & Soft"],["analytical skills","Leadership & Soft"],["critical thinking","Leadership & Soft"],
+  ["decision making","Leadership & Soft"],["negotiation","Leadership & Soft"],["adaptability","Leadership & Soft"],
+  ["collaboration","Leadership & Soft"],["cross-functional collaboration","Leadership & Soft"],["mentoring","Leadership & Soft"],
+  ["conflict resolution","Leadership & Soft"],["attention to detail","Leadership & Soft"],["organizational skills","Leadership & Soft"],
+  ["client relationship management","Leadership & Soft"],["multitasking","Leadership & Soft"],["customer service","Sales & Customer"]
+];
+
+/* ---------------- STATE ---------------- */
+let RESUME_TEXT = "";
+let JD_TEXT = "";
+let extraSkills = [];
+const confirmed = {}; // name -> true
+
+/* ---------------- FILE READING ---------------- */
+async function fileToText(file){
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  if(ext === "pdf"){
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    let out = "";
+    for(let i=1;i<=pdf.numPages;i++){
+      const page = await pdf.getPage(i);
+      const tc = await page.getTextContent();
+      out += tc.items.map(it=>it.str).join(" ") + "\n";
+    }
+    return out;
+  }
+  if(ext === "docx"){
+    const buf = await file.arrayBuffer();
+    const res = await mammoth.extractRawText({ arrayBuffer: buf });
+    return res.value || "";
+  }
+  if(ext === "txt"){ return await file.text(); }
+  throw new Error("Unsupported file type: ." + ext + " (use PDF, DOCX or TXT)");
+}
+
+function bindFileInput(id, targetId){
+  document.getElementById(id).addEventListener("change", async (e)=>{
+    const f = e.target.files[0];
+    if(!f) return;
+    const ta = document.getElementById(targetId);
+    const label = ta.closest(".card").querySelector("label.field");
+    const prev = label.textContent;
+    try{
+      label.textContent = "Reading '" + f.name + "'...";
+      const text = await fileToText(f);
+      ta.value = text;
+      ta.dispatchEvent(new Event("input"));
+      label.textContent = "Loaded: " + f.name + " (" + text.length + " chars) - edit below if needed";
+    }catch(err){
+      label.textContent = prev;
+      alert("Could not read file: " + err.message);
+    }
+    e.target.value = "";
+  });
+}
+bindFileInput("resumeFile","resumeText");
+bindFileInput("jdFile","jdText");
+
+/* ---------------- EXTRA SKILLS ---------------- */
+function addSkill(){
+  const inp = document.getElementById("addSkillInput");
+  const v = inp.value.trim().replace(/,$/,"");
+  if(!v) return;
+  extraSkills.push(v.toLowerCase());
+  renderChips();
+  inp.value = "";
+  if(!document.getElementById("results").classList.contains("hidden")) analyze();
+}
+function removeSkill(i){
+  extraSkills.splice(i,1);
+  renderChips();
+  if(!document.getElementById("results").classList.contains("hidden")) analyze();
+}
+function renderChips(){
+  const box = document.getElementById("extraChips");
+  box.innerHTML = extraSkills.map((s,i)=>
+    '<span class="chip">'+escapeHtml(s)+' <button onclick="removeSkill('+i+')" title="remove">&times;</button></span>'
+  ).join("");
+  document.getElementById("addSkillInput").addEventListener("keydown", function(ev){
+    if(ev.key === "Enter"){ ev.preventDefault(); addSkill(); }
+  });
+}
+
+/* ---------------- HELPERS ---------------- */
+function escapeHtml(s){
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function tokens(text){
+  return text.toLowerCase().replace(/[^a-z0-9+#.\u00c0-\u024f%]/g," ").split(/\s+/)
+    .filter(t=>t.length>=2 && !STOPWORDS.has(t) && !/^\d+$/.test(t));
+}
+function containsPhrase(text, phrase){
+  const t = " " + text.toLowerCase().trim().replace(/\s+/g," ") + " ";
+  const p = phrase.toLowerCase().trim().replace(/\s+/g," ");
+  if(p.includes(" ")) return t.includes(" " + p + " ") || t.includes(p);
+  const safe = p.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  return new RegExp("\\b"+safe+"\\b").test(t);
+}
+function countToken(text){
+  const map = {};
+  tokens(text).forEach(t=>{ map[t] = (map[t]||0)+1; });
+  return map;
+}
+
+/* ---------------- ANALYSIS ---------------- */
+let skillRows = [];
+let jdTop = [];
+
+function skillCoverage(text){ // skill name -> found
+  const cov = {};
+  SKILLS.forEach(s=>{ cov[s[0]] = containsPhrase(text, s[0]); });
+  return cov;
+}
+
+function analyze(){
+  RESUME_TEXT = document.getElementById("resumeText").value.trim();
+  JD_TEXT = document.getElementById("jdText").value.trim();
+  if(!RESUME_TEXT && !JD_TEXT){ alert("Please add your resume text (upload or paste) and the job description first."); return; }
+  if(!JD_TEXT){ alert("Please paste the job description so we can compare against it."); return; }
+
+  const fullResume = RESUME_TEXT + "\n" + extraSkills.join("\n");
+  const jdCV = skillCoverage(JD_TEXT);
+  const resCV = skillCoverage(fullResume);
+
+  skillRows = [];
+  SKILLS.forEach(s=>{
+    const name = s[0], cat = s[1];
+    const inJd = jdCV[name], inRes = resCV[name];
+    if(inJd || inRes){
+      skillRows.push({ name, cat, inJd, inRes, self: !!confirmed[name], extra: extraSkills.includes(name) });
+    }
+  });
+
+  // top JD keywords (excluding skills that we already track individually)
+  const cm = countToken(JD_TEXT);
+  const skillNames = new Set(SKILLS.map(s=>s[0]));
+  jdTop = Object.entries(cm).filter(([w])=>!STOPWORDS.has(w) && w.length>3 && !skillNames.has(w))
+    .sort((a,b)=>b[1]-a[1]).slice(0,18);
+
+  document.getElementById("results").classList.remove("hidden");
+  document.getElementById("results").scrollIntoView({behavior:"smooth", block:"start"});
+  refreshAll();
+}
+
+function compute(){
+  let matched=0, missing=0, extra=0, self=0;
+  const matchedList=[], missingList=[], extraList=[], selfList=[];
+  skillRows.forEach(r=>{
+    if(r.self){ self++; selfList.push(r); matched++; matchedList.push(r); }
+    else if(r.inRes && r.inJd){ matched++; matchedList.push(r); }
+    else if(r.inJd){ missing++; missingList.push(r); }
+    else if(r.inRes){ extra++; extraList.push(r); }
+  });
+  // generic keyword overlap
+  const resTok = new Set(tokens(RESUME_TEXT + "\n" + extraSkills.join("\n")));
+  let kwHit=0;
+  jdTop.forEach(([w])=>{ if(resTok.has(w)) kwHit++; });
+  const kwOverlap = jdTop.length ? (kwHit/jdTop.length)*100 : 0;
+  const skillScore = (matched+missing) ? (matched/(matched+missing))*100 : 0;
+  const score = Math.round(0.6*skillScore + 0.4*kwOverlap);
+  return { score, matched, missing, extra, self, matchedList, missingList, extraList, selfList, kwHit, kwOverlap };
+}
+
+function refreshAll(){
+  const c = compute();
+  document.getElementById("scoreVal").textContent = c.score + "%";
+  document.getElementById("sMatched").textContent = c.matched;
+  document.getElementById("sMissing").textContent = c.missing;
+  document.getElementById("sExtra").textContent = c.extra;
+  document.getElementById("sSelf").textContent = c.self;
+
+  const g = document.getElementById("gauge");
+  g.style.background = "conic-gradient(" + (c.score>=70?"var(--green)":c.score>=45?"var(--amber)":"var(--red)") + " " + c.score + "%, #334155 " + c.score + "%)";
+
+  let verdict, sub;
+  if(c.score>=85){ verdict="Excellent match"; sub="You are a strong candidate. Focus the ATS resume on reinforcing the matched items and quantify results in experience bullets."; }
+  else if(c.score>=70){ verdict="Good match"; sub="Solid fit. Close the remaining gaps below by weaving missing keywords you genuinely possess into the summary and skills sections."; }
+  else if(c.score>=50){ verdict="Average match"; sub="You have a base, but several required skills are missing or not visible on your resume. Prioritize the gaps listed below."; }
+  else if(c.score>=30){ verdict="Weak match"; sub="Significant gaps. Either highlight genuinely-missing skills under a 'Self-Verified' column, or reconsider fit for this role."; }
+  else { verdict="Poor match"; sub="This role needs skills you currently show little of. Use this as a gap list to plan skill-building, or apply to roles closer to your profile."; }
+  document.getElementById("verdict").textContent = verdict;
+  document.getElementById("scoreSub").textContent = sub;
+
+  renderCheckTable(c);
+  renderStrengthsWeaknesses(c);
+  renderKwCloud(c);
+  renderKeywordsSuggested(c);
+  renderImprovementAreas(c);
+}
+
+function renderCheckTable(c){
+  let rows = "";
+  skillRows.forEach((r,i)=>{
+    const covCell = r.inRes
+      ? '<span class="tag t-yes">Yes</span>'
+      : (r.self ? '<span class="tag t-part">Self-verified</span>' : '<span class="tag t-no">No</span>');
+    rows += "<tr>" +
+      "<td>"+escapeHtml(r.name)+"</td>" +
+      "<td>"+escapeHtml(r.cat)+"</td>" +
+      "<td>"+(r.inJd?'<span class="ok">&#10003;</span>':'<span class="no">&#10007;</span>')+"</td>" +
+      "<td>"+covCell+"</td>" +
+      "<td>"+(r.inJd && !r.inRes
+        ? '<input type="checkbox" '+(r.self?"checked":"")+' onchange="toggleSelf('+i+')">'
+        : '<span class="note">-</span>')+"</td>" +
+    "</tr>";
+  });
+  document.getElementById("checkBody").innerHTML = rows || "<tr><td colspan=5 class='note'>No skills matched the JD or your resume text.</td></tr>";
+}
+
+function toggleSelf(i){
+  const r = skillRows[i];
+  confirmed[r.name] = !confirmed[r.name];
+  r.self = confirmed[r.name];
+  refreshAll();
+}
+
+function renderStrengthsWeaknesses(c){
+  const byCat = {};
+  c.matchedList.forEach(r=>{ (byCat[r.cat]=byCat[r.cat]||[]).push(r.name); });
+  let strHtml = "";
+  for(const cat in byCat){
+    strHtml += '<span class="cat-tag">'+escapeHtml(cat)+'</span><div>';
+    byCat[cat].forEach(n=>{ strHtml += '<span class="pill p-hit">'+escapeHtml(n)+'</span>'; });
+    strHtml += "</div>";
+  }
+  if(c.selfList.length){
+    strHtml += '<span class="cat-tag">Self-verified (you confirmed, add to resume)</span><div>';
+    c.selfList.forEach(r=>{ strHtml += '<span class="pill p-self">'+escapeHtml(r.name)+'</span>'; });
+    strHtml += "</div>";
+  }
+  strHtml ||= '<span class="note">No matched skills with this job yet.</span>';
+  document.getElementById("strengths").innerHTML = strHtml;
+
+  const missCat = {};
+  c.missingList.forEach(r=>{ (missCat[r.cat]=missCat[r.cat]||[]).push(r.name); });
+  let weakHtml = "";
+  for(const cat in missCat){
+    weakHtml += '<span class="cat-tag">'+escapeHtml(cat)+'</span><div>';
+    missCat[cat].forEach(n=>{ weakHtml += '<span class="pill p-miss">'+escapeHtml(n)+'</span>'; });
+    weakHtml += "</div>";
+  }
+  if(!weakHtml) weakHtml = '<span class="note ok">No missing required skills. Great coverage!</span>';
+  weakHtml += '<div class="note mt">Fix strategy: if a missing skill is one you actually have but did not write on your resume, tick it in the checklist above and then re-run.</div>';
+  document.getElementById("weaknesses").innerHTML = weakHtml;
+}
+
+function renderKwCloud(c){
+  const resTok = new Set(tokens(RESUME_TEXT + "\n" + extraSkills.join("\n")));
+  let html = "";
+  jdTop.forEach(([w])=>{
+    const found = resTok.has(w);
+    html += '<span class="kw '+(found?"kw-found":"kw-miss")+'">'+escapeHtml(w)+(found?" <span class='ok'>&#10003;</span>":" <span class='no'>&#10007;</span>")+"</span>";
+  });
+  document.getElementById("kwCloud").innerHTML = html || "<span class='note'>No meaningful keywords extracted.</span>";
+}
+
+function renderKeywordsSuggested(c){
+  const resTok = new Set(tokens(RESUME_TEXT + "\n" + extraSkills.join("\n")));
+  
+  // Missing JD skills from the skill dictionary
+  const missingSkills = c.missingList.map(r => r.name);
+  const selfVerified = c.selfList.map(r => r.name);
+  
+  // Top JD keywords not in resume
+  const missingKeywords = jdTop.filter(([w]) => !resTok.has(w)).map(([w]) => w);
+  
+  // Matched skills (good to reinforce)
+  const matchedSkills = c.matchedList.map(r => r.name);
+  
+  let html = "";
+  
+  // Priority 1: Missing JD Skills (must-have for this role)
+  if(missingSkills.length){
+    html += '<div style="margin-bottom:16px;"><strong style="color:var(--red);">Missing Required Skills (Add if you have them):</strong>';
+    html += '<div style="margin-top:8px;">' + missingSkills.map(s => 
+      '<span class="kw kw-miss" style="cursor:pointer;" onclick="copyToClipboard(this)" title="Click to copy">' + escapeHtml(s) + '</span>'
+    ).join("") + '</div></div>';
+  }
+  
+  // Priority 2: Missing Keywords from JD
+  if(missingKeywords.length){
+    html += '<div style="margin-bottom:16px;"><strong style="color:var(--amber);">Missing JD Keywords (Add if relevant):</strong>';
+    html += '<div style="margin-top:8px;">' + missingKeywords.map(w => 
+      '<span class="kw kw-miss" style="cursor:pointer;" onclick="copyToClipboard(this)" title="Click to copy">' + escapeHtml(w) + '</span>'
+    ).join("") + '</div></div>';
+  }
+  
+  // Priority 3: Self-verified skills to add
+  if(selfVerified.length){
+    html += '<div style="margin-bottom:16px;"><strong style="color:var(--amber);">Self-Verified Skills (Add to resume now):</strong>';
+    html += '<div style="margin-top:8px;">' + selfVerified.map(s => 
+      '<span class="kw p-self" style="cursor:pointer;" onclick="copyToClipboard(this)" title="Click to copy">' + escapeHtml(s) + '</span>'
+    ).join("") + '</div></div>';
+  }
+  
+  // Priority 4: Matched skills to reinforce
+  if(matchedSkills.length){
+    html += '<div style="margin-bottom:16px;"><strong style="color:var(--green);">Matched Skills (Reinforce in Summary/Experience):</strong>';
+    html += '<div style="margin-top:8px;">' + matchedSkills.map(s => 
+      '<span class="kw kw-found" style="cursor:pointer;" onclick="copyToClipboard(this)" title="Click to copy">' + escapeHtml(s) + '</span>'
+    ).join("") + '</div></div>';
+  }
+  
+  if(!html){
+    html = "<span class='note'>No keyword suggestions for this job description.</span>";
+  }
+  
+  // Add copy helper
+  html += '<div class="note" style="margin-top:12px;">💡 Click any keyword above to copy it to your clipboard. Paste into your resume where it fits naturally (Skills section, Professional Summary, or Experience bullets).</div>';
+  
+  document.getElementById("keywordsSuggested").innerHTML = html;
+}
+
+function copyToClipboard(el){
+  const text = el.textContent.trim();
+  navigator.clipboard.writeText(text).then(()=>{
+    const original = el.style.background;
+    el.style.background = "rgba(52,211,153,0.3)";
+    el.textContent = "✓ Copied!";
+    setTimeout(()=>{
+      el.style.background = original;
+      el.textContent = text;
+    }, 1200);
+  }).catch(()=>{
+    prompt("Copy this keyword:", text);
+  });
+}
+
+function renderImprovementAreas(c){
+  let html = "";
+  
+  // 1. Missing required skills
+  if(c.missingList.length){
+    const byCat = {};
+    c.missingList.forEach(r => { (byCat[r.cat] = byCat[r.cat] || []).push(r.name); });
+    
+    html += '<div style="margin-bottom:16px;"><strong>1. Add Missing Required Skills</strong>';
+    html += '<p class="note" style="margin-top:6px;">These skills are explicitly required by the job description but not found on your resume. Only add ones you can genuinely demonstrate:</p>';
+    for(const cat in byCat){
+      html += '<div style="margin:8px 0;"><strong>' + escapeHtml(cat) + ':</strong> ' + 
+        byCat[cat].map(s => '<span class="pill p-miss" onclick="copyToClipboard(this)" style="cursor:pointer;" title="Click to copy">' + escapeHtml(s) + '</span>').join(" ") + '</div>';
+    }
+    html += '</div>';
+  }
+  
+  // 2. Keyword gaps
+  const resTok = new Set(tokens(RESUME_TEXT + "\n" + extraSkills.join("\n")));
+  const missingKeywords = jdTop.filter(([w]) => !resTok.has(w)).map(([w]) => w);
+  if(missingKeywords.length){
+    html += '<div style="margin-bottom:16px;"><strong>2. Incorporate Missing JD Keywords</strong>';
+    html += '<p class="note" style="margin-top:6px;">These high-frequency keywords from the job description don\'t appear on your resume. Weave them naturally into your Summary, Skills, or Experience bullets (only if accurate):</p>';
+    html += '<div>' + missingKeywords.map(w => 
+      '<span class="kw kw-miss" onclick="copyToClipboard(this)" style="cursor:pointer;" title="Click to copy">' + escapeHtml(w) + '</span>'
+    ).join("") + '</div></div>';
+  }
+  
+  // 3. Self-verified skills to add
+  if(c.selfList.length){
+    html += '<div style="margin-bottom:16px;"><strong>3. Add Your Self-Verified Skills</strong>';
+    html += '<p class="note" style="margin-top:6px;">You confirmed you have these skills but they\'re not on your resume. Add them to your Skills section immediately:</p>';
+    html += '<div>' + c.selfList.map(r => 
+      '<span class="pill p-self" onclick="copyToClipboard(this)" style="cursor:pointer;" title="Click to copy">' + escapeHtml(r.name) + '</span>'
+    ).join(" ") + '</div></div>';
+  }
+  
+  // 4. Formatting/structure recommendations
+  html += '<div style="margin-bottom:16px;"><strong>4. Resume Structure Improvements</strong>';
+  html += '<ol class="steps" style="margin:8px 0 0 18px;">';
+  html += '<li>Use standard ATS headings: PROFESSIONAL SUMMARY, CORE COMPETENCIES, PROFESSIONAL EXPERIENCE, EDUCATION, CERTIFICATIONS</li>';
+  html += '<li>Lead experience bullets with action verbs + quantified results (e.g., "Reduced processing time 30% by implementing...")</li>';
+  html += '<li>Match JD phrasing exactly for key skills (if JD says "cloud infrastructure", use that exact term)</li>';
+  html += '<li>Keep layout single-column; avoid tables, graphics, columns, or text boxes that break parsers</li>';
+  html += '<li>Include a dedicated Skills section with bullet-separated competencies (parsers read these first)</li>';
+  html += '</ol></div>';
+  
+  // 5. Experience gap analysis
+  const expSec = findSection(sectionSplit(RESUME_TEXT), ["EXPERIENCE","WORK EXPERIENCE","PROFESSIONAL EXPERIENCE","CAREER HISTORY","EMPLOYMENT","INTERNSHIP"]);
+  if(!expSec || !expSec.lines.filter(l=>l.trim()).length){
+    html += '<div style="margin-bottom:16px;"><strong>5. Add Professional Experience</strong>';
+    html += '<p class="note" style="margin-top:6px;">No experience section detected. Add your work history with company, role, dates, and 3-5 quantified bullets per role.</p></div>';
+  }
+  
+  if(!html || html.includes("Resume Structure Improvements") === false){
+    html = "<span class='note ok'>Your resume covers the key requirements well. Focus on quantifying achievements and reinforcing matched keywords.</span>";
+  }
+  
+  document.getElementById("improvementAreas").innerHTML = html;
+}
+
+/* ---------------- ATS-FRIENDLY RESUME ---------------- */
+function sectionSplit(text){
+  const headerRe = /^(summary|professional summary|career summary|profile|career objective|objective|certifications?(\s*&\s*|\s+and\s+)?(achievements?)?|achievements|awards|education|academic|core competencies|core skills|key skills|key expertise|skills|technical skills|languages|projects?(\s*&\s*|\s+and\s+)?(tools developed|portfolio)?|experience|work experience|professional experience|professional history|career history|employment|internship|interests|additional information|contact|certificates)\s*:?$/i;
+  const lines = text.split(/\r?\n/);
+  const sections = [];
+  let cur = null;
+  lines.forEach(line=>{
+    const trimmed = line.trim();
+    if(headerRe.test(trimmed)){
+      cur = { title: trimmed.replace(/:$/,""), lines: [] };
+      sections.push(cur);
+    } else {
+      if(!cur){ cur = { title: "HEADER / INTRO", lines: [] }; sections.push(cur); }
+      cur.lines.push(line);
+    }
+  });
+  return sections;
+}
+function sectionBase(s){
+  const t = s.title.toLowerCase();
+  if(t.includes("summary") || t.includes("objective") || t === "profile") return "PROFESSIONAL SUMMARY";
+  if(t.includes("competenc") || t.includes("skill") || t.includes("language")) return "KEY SKILLS";
+  if(t.includes("experience") || t.includes("employment") || t.includes("career history") || t.includes("internship")) return "PROFESSIONAL EXPERIENCE";
+  if(t.includes("project")) return "PROJECTS & TOOLS DEVELOPED";
+  if(t.includes("education") || t.includes("academic")) return "EDUCATION";
+  if(t.includes("certif") || t.includes("license") || t.includes("achievement") || t.includes("award") || t.includes("honor")) return "CERTIFICATIONS & ACHIEVEMENTS";
+  return null;
+}
+function findSection(sections, names){
+  const bases = names.map(n=>(sectionBase({title:n})||n).toLowerCase());
+  for(const s of sections){
+    const sb = (sectionBase(s)||s.title).toLowerCase();
+    if(bases.some(b=>b===sb)) return s;
+  }
+  return null;
+}
+function extractHeaderInfo(){
+  const src = RESUME_TEXT;
+  const sections = sectionSplit(src);
+  const headSec = findSection(sections, ["HEADER / INTRO"]);
+  const headLines = (headSec ? headSec.lines : []).map(l=>l.replace(/^[-•·●]\s+/,"").trim()).filter(Boolean);
+  const firstRaw = src.split(/\r?\n/).map(l=>l.trim()).filter(Boolean)[0] || "";
+  const name = (headLines[0] || firstRaw || "YOUR NAME").replace(/^[-•·●]\s+/,"");
+  const headText = (headSec ? headSec.lines : []).join("\n") || src;
+  const email = (headText.match(/[\w.+-]+@[\w-]+\.[\w.]+/)||[""])[0];
+  const phone = (headText.match(/(?:(?:\+?\d{1,3})?[\s.-]*(?:\(\d{2,5}\))?[\s.-]*\d{2,5}[\s.-]?\d{3,6})/)||[""])[0].replace(/^[\s.-]+/,"").trim();
+  const linkedin = (headText.match(/linkedin\.com\/[^\s|,]*/i)||[""])[0];
+  const web = (headText.match(/(?:github|bitbucket|gitlab)\.com\/[^\s|,]*/i)||[""])[0];
+  let location = "";
+  let headline = "";
+  for(let i=1;i<headLines.length;i++){
+    const l = headLines[i];
+    if(l.length>=4 && l.length<=52 && /^[A-Za-z][A-Za-z\s.'-]*,[A-Za-z\s.'-]+$/.test(l) && !location){
+      location = l.replace(/\.$/,""); continue;
+    }
+    if(!headline && l.length>=8 && (l.length<=66 || (l.includes("|") && l.length<=120)) && !/@/.test(l) && !/\d/.test(l) && !/linkedin|http|www|\.com|such as|with over/i.test(l) && !l.includes(",")){
+      headline = l;
+    }
+  }
+  if(!location){
+    const locLine = headLines.find(l=>/^\s*[A-Za-z][A-Za-z\s.'-]*(?:,\s*[A-Za-z][A-Za-z\s.'-]*)*\s*[|]/.test(l));
+    if(locLine) location = locLine.trim().split(/[|]/)[0].trim();
+  }
+  const mainParts = [location, phone, email, linkedin].filter(Boolean);
+  const extraParts = [web].filter(Boolean);
+  return { name: name.replace(/^[-•·●]\s+/,""), headline, contact: mainParts.join(" | "), contactExtra: extraParts.join(" | ") };
+}
+function normalizeExperience(lines){
+  const roles = [];
+  let cur = null, pending = null;
+  const flush = ()=>{ if(cur){ roles.push(cur); cur = null; } };
+  const newRole = (obj)=>{ flush(); cur = obj; };
+  const nextNonEmpty = (idx)=>{
+    for(let j=idx+1;j<lines.length;j++){ if(lines[j].trim()) return lines[j].trim(); }
+    return "";
+  };
+  for(let i=0;i<lines.length;i++){
+    const t = lines[i].trim();
+    if(!t) continue;
+    if(/^[-•·●]\s+/.test(t)){
+      const text = t.replace(/^[-•·●]\s+/,"").replace(/\s+/g," ").trim();
+      if(!cur) cur = { title: pending||"", meta:"", bullets:[] };
+      if(pending){ cur.title = pending; pending = null; }
+      cur.bullets.push(text);
+      continue;
+    }
+    if(dateRangeOf(t)){
+      if(pending){
+        newRole({ title: pending, meta: metaFromLine(t), bullets: [] });
+        pending = null;
+      } else {
+        const d = dissectMeta(t);
+        newRole({ title: d.title||"", meta: d.meta||metaFromLine(t), bullets: [] });
+      }
+      continue;
+    }
+    const next = nextNonEmpty(i);
+    if(t.length<=68 && /^[A-Z]/.test(t) && !/[|•]/.test(t) && !/\.$/.test(t) && next && dateRangeOf(next) && !/\b(responsibilities|duties|such as)\b/i.test(t)){
+      if(cur && (cur.bullets.length || cur.meta)) flush();
+      pending = t;
+      continue;
+    }
+    if(!cur) cur = { title:"", meta:"", bullets:[] };
+    cur.bullets.push(t);
+  }
+  flush();
+  return roles;
+}
+const RULE_LINE = "─".repeat(46);
+function renderATSResume(c){
+  const src = RESUME_TEXT;
+  const sections = sectionSplit(src);
+  const summary = findSection(sections, ["SUMMARY","PROFESSIONAL SUMMARY","OBJECTIVE","CAREER SUMMARY"]);
+  const titleExact = (title)=> sections.find(s=>(s.title||"").toUpperCase().replace(/[:\s]+$/,"") === title) || null;
+  const coreSec = titleExact("CORE COMPETENCIES") || findSection(sections, ["CORE SKILLS"]);
+  const keySec = titleExact("KEY SKILLS");
+  const skillsSec = coreSec || findSection(sections, ["SKILLS","TECHNICAL SKILLS","LANGUAGES","CORE COMPETENCIES","KEY SKILLS"]);
+  const exp = findSection(sections, ["EXPERIENCE","WORK EXPERIENCE","PROFESSIONAL EXPERIENCE","CAREER HISTORY","EMPLOYMENT","INTERNSHIP"]);
+  const edu = findSection(sections, ["EDUCATION","ACADEMIC"]);
+  const cert = findSection(sections, ["CERTIFICATIONS","CERTIFICATES","LICENSES","ACHIEVEMENTS","AWARDS"]);
+  const proj = findSection(sections, ["PROJECTS","PORTFOLIO"]);
+  const awards = findSection(sections, ["ACHIEVEMENTS","AWARDS"]);
+
+  const { name: nm, headline, contact, contactExtra } = extractHeaderInfo();
+  const clean = (sec)=> sec ? sec.lines.map(l=>l.trim()).filter(Boolean).join("\n") : "";
+
+  let summaryLines = summary ? summary.lines.map(l=>l.replace(/^[-•·●]\s+/,"").trim()).filter(Boolean) : [];
+  let coreExtra = [];
+  summaryLines = summaryLines.filter(l=>{
+    const m = l.match(/^(?:core expertise|key skills|core competencies|technical skills|skills)\s*[:.\-]?\s*(.*)$/i);
+    if(m && m[1]){
+      m[1].split(/\s*[,;•]\s*|\s+\band\b\s+|\s*&\s*/i).map(s=>s.trim()).filter(Boolean).forEach(s=>coreExtra.push(s));
+      return false;
+    }
+    return true;
+  });
+  const matchedNames = c.matchedList.map(r=>r.name);
+  const extraNames = c.extraList.map(r=>r.name).concat(extraSkills).filter(n=>!matchedNames.includes(n));
+  const uniq = arr => arr.filter((v,i,a)=>a.indexOf(v)===i);
+  const core = uniq(matchedNames.concat(coreExtra));
+  const extra = uniq(extraNames.filter(n=>SKILLS.some(s=>s[0]===n) || (skillsSec && containsPhrase(skillsSec.lines.join("\n"),n))));
+  const keyAll = uniq(core.concat(extra));
+  const skillLineOf = (sec)=>{
+    let items = [], prevBullet = false;
+    (sec.lines||[]).forEach(l=>{
+      const raw = l.trim();
+      if(!raw) return;
+      const bullet = /^[-•·●]\s+/.test(raw);
+      const text = cleanSkill(raw.replace(/^[-•·●]\s+/,"")).replace(/\s+[-–—]+\s+/g," • ").replace(/(\s*•\s*)+/g," • ").replace(/\s+•\s+/g," • ").trim();
+      if(!text) return;
+      if(items.length && !bullet && !prevBullet) items[items.length-1] += " " + text;
+      else items.push(text);
+      prevBullet = bullet;
+    });
+    return items.join(" • ");
+  };
+  const skillItemsOf = (sec)=>{
+    let items = [], prevBullet = false;
+    (sec.lines||[]).forEach(l=>{
+      const raw = l.trim();
+      if(!raw) return;
+      const bullet = /^[-•·●]\s+/.test(raw);
+      const text = cleanSkill(raw.replace(/^[-•·●]\s+/,"")).replace(/\s+[-–—]+\s+/g," • ").replace(/(\s*•\s*)+/g," • ").replace(/\s+•\s+/g," • ").trim();
+      if(!text) return;
+      if(items.length && !bullet && !prevBullet) items[items.length-1] += " " + text;
+      else items.push(text);
+      prevBullet = bullet;
+    });
+    return items;
+  };
+  const compItems = coreSec ? skillItemsOf(coreSec) : (skillsSec && !keySec ? skillItemsOf(skillsSec) : []);
+  const keyItems = keySec ? skillItemsOf(keySec) : (skillsSec && !coreSec ? skillItemsOf(skillsSec) : []);
+  const compSet = new Set(compItems.map(s=>s.toLowerCase()));
+  const uniqueKeyItems = keyItems.filter(s=>!compSet.has(s.toLowerCase()));
+  const compLine = compItems.join(" • ");
+  const keyLine = uniqueKeyItems.join(" • ");
+
+  const roles = exp ? normalizeExperience(exp.lines) : [];
+  const recentTitle = roles.length ? (roles[roles.length-1].title || "") : "";
+  let earliestYear = null;
+  roles.forEach(r=>{
+    (r.meta + " " + r.title).match(/19\d{2}|20\d{2}/g)?.forEach(y=>{
+      const n = +y;
+      if(n>=1980 && (!earliestYear || n<earliestYear)) earliestYear = n;
+    });
+  });
+  const yearsExp = earliestYear ? Math.max(1, new Date().getFullYear() - earliestYear) : 0;
+  const recentJob = recentTitle ? recentTitle : (core.length ? core.slice(0,3).join(", ") : "");
+  const headlineFinal = headline || recentJob || "Professional";
+
+  const heading = (title, bodyText)=>
+    "\n" + title + "\n" + RULE_LINE + "\n" + (bodyText ? bodyText.trim().replace(/[ \t]+$/gm,"") + "\n" : "");
+  const dashNormalize = (body)=> body.split("\n").map(l=>{
+    if(/^[-•·●]\s+/.test(l.trim())) return l;
+    if(/^tools?\s*[:/]/i.test(l.trim())) return l.trim().replace(/^tools?\s*[:/]\s*/i,"").replace(/\s+[-–—]+\s+/g," • ");
+    return l
+      .replace(/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\s*[-–—]\s*(?:[a-z]*\.?\s+\d{4}|present|current)\b/gi, m=>m.replace(/\s*[-–—]+\s*/g," – "))
+      .replace(/(?:19|20)\d{2}\s*[-–—]\s*(?:(?:19|20)\d{2}|present|current)\b/gi, m=>m.replace(/\s*[-–—]+\s*/g," – "))
+      .replace(/\s+[-–—]+\s+/g," — ");
+  }).join("\n");
+
+  const leadLine = yearsExp ? "Professional with " + yearsExp + "+ years of experience." : "";
+
+  let out = "";
+  out += (nm||"YOUR NAME").toUpperCase().trim() + "\n";
+  out += headlineFinal + "\n";
+  if(contact) out += contact + "\n";
+  if(contactExtra) out += contactExtra + "\n";
+  out += RULE_LINE + "\n";
+
+  let sumBody = leadLine;
+  if(summaryLines.length){
+    const joined = summaryLines.join("\n");
+    if(leadLine && /\d+\+?\s+years?\s+of\s+experience/i.test(joined)) sumBody = joined;
+    else sumBody = [leadLine, joined].filter(Boolean).join("\n");
+  }
+  if(!sumBody){
+    sumBody = "Professional with expertise in " + (keyAll.length ? keyAll.join(", ") : "business operations") + ".";
+  }
+  out += heading("PROFESSIONAL SUMMARY", sumBody);
+
+  out += heading("CORE COMPETENCIES", compLine
+    || (core.concat(extra).length
+      ? "- " + core.concat(extra).join(" • ")
+      : "- Pending review — add verified skills above or in the editor."));
+
+  if(roles.length){
+    let expBody = "";
+    roles.forEach(r=>{
+      if(r.title) expBody += r.title + "\n";
+      if(r.meta) expBody += r.meta + "\n";
+      r.bullets.forEach(b=>{ expBody += "- " + b + "\n"; });
+    });
+    out += heading("PROFESSIONAL EXPERIENCE", expBody);
+  } else if(exp){
+    out += heading("PROFESSIONAL EXPERIENCE", clean(exp));
+  } else {
+    const rest = sections.filter(s=>s.title.toLowerCase() !== "header / intro" && !sectionBase(s))
+      .map(s=>clean(s)).filter(Boolean);
+    if(rest.length) out += heading("PROFESSIONAL EXPERIENCE", rest.join("\n\n"));
+  }
+
+  if(proj){ out += heading("PROJECTS & TOOLS DEVELOPED", dashNormalize(clean(proj))); }
+  if(edu){ out += heading("EDUCATION", dashNormalize(clean(edu))); }
+  if(keyLine){ out += heading("KEY SKILLS", keyLine); }
+  else if(keyAll.length && !keySec){ out += heading("KEY SKILLS", "- " + keyAll.join(" • ")); }
+  if(cert){ out += heading("CERTIFICATIONS & ACHIEVEMENTS", clean(cert)); }
+  else if(awards){ out += heading("CERTIFICATIONS & ACHIEVEMENTS", clean(awards)); }
+
+  out += "\n" + "=".repeat(46) + "\n# ATS NOTE: Reuses ONLY content found in your original resume. Edit freely, then download .docx.\n# Self-verified skills are listed in the report — add them here only if you truly have them.\n";
+
+  document.getElementById("atsResume").value = out;
+  renderPreview();
+}
+
+/* ---------------- COPY / DOWNLOAD ---------------- */
+function copyATS(){
+  const t = document.getElementById("atsResume").value;
+  navigator.clipboard.writeText(t).then(()=>alert("ATS resume copied to clipboard.")).catch(()=>{ prompt("Copy the text below:", t); });
+}
+function downloadATS(){
+  const t = document.getElementById("atsResume").value;
+  downloadBlob("ats_friendly_resume.txt", t, "text/plain");
+}
+
+/* ---------------- DOCX (Word .docx) EXPORT ---------------- */
+const NAVY = "1F3864";
+const INK = "222222";
+const GRAY = "222222";
+const ATS_HEADINGS = new Set([
+  "PROFESSIONAL SUMMARY","CAREER SUMMARY","SUMMARY","OBJECTIVE","PROFILE","CAREER OBJECTIVE",
+  "CORE COMPETENCIES","CORE SKILLS","KEY SKILLS","TECHNICAL SKILLS","LANGUAGES","SKILLS",
+  "PROFESSIONAL EXPERIENCE","EXPERIENCE","WORK EXPERIENCE","PROFESSIONAL HISTORY","CAREER HISTORY","EMPLOYMENT",
+  "PROJECTS & TOOLS DEVELOPED","PROJECTS AND TOOLS DEVELOPED","PROJECTS & PORTFOLIO","PROJECTS AND PORTFOLIO","PROJECTS","PORTFOLIO",
+  "EDUCATION","ACADEMIC",
+  "CERTIFICATIONS & ACHIEVEMENTS","CERTIFICATIONS AND ACHIEVEMENTS","CERTIFICATIONS","CERTIFICATES","LICENSES","ACHIEVEMENTS","AWARDS","SUPERVISORY EXPERIENCE",
+  "HEADER / INTRO","CONTACT","ADDITIONAL INFORMATION"
+]);
+const SKILL_SECTIONS = new Set(["CORE COMPETENCIES","CORE SKILLS","KEY SKILLS","TECHNICAL SKILLS","SKILLS","LANGUAGES"]);
+const SUMMARY_SECTIONS = new Set(["PROFESSIONAL SUMMARY","CAREER SUMMARY","SUMMARY","OBJECTIVE","PROFILE","CAREER OBJECTIVE"]);
+const EXP_SECTIONS = new Set(["PROFESSIONAL EXPERIENCE","EXPERIENCE","WORK EXPERIENCE","PROFESSIONAL HISTORY","CAREER HISTORY","EMPLOYMENT"]);
+function xmlEsc(s){
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+function regEscape(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"); }
+function dateRangeOf(line){
+  const mo = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?\\s+";
+  const m = line.match(new RegExp("(?:"+mo+")?(19|20)\\d{2}\\s*[-–—]\\s*(?:(?:"+mo+")?(?:present|current|now|(?:19|20)\\d{2}))","i"));
+  if(m) return m[0];
+  const y = line.match(/(19|20)\d{2}/);
+  return y ? y[0] : null;
+}
+function cleanSkill(s){
+  return s.replace(/^[-•·●\s]+/,"")
+    .replace(/[;,]\s*/g," • ")
+    .replace(/(\s*•\s*)+/g," • ")
+    .replace(/\s+/g," ")
+    .replace(/\s?\.$/,"")
+    .replace(/ ?• ?$/,"")
+    .trim();
+}
+function isContactLine(t){
+  return /[\w.+-]+@[\w-]+\.[\w.]+|linkedin\.com|github\.com|bitbucket\.org|http|www\.|(\+\d[\d\s-]*\d)|\b\d{3}[-. ]?\d{3}[-. ]?\d{4}\b/i.test(t)
+    && t.length <= 170;
+}
+function isHeadlineLine(t){
+  if(t.length<8 || t.length>120) return false;
+  if(t.length>68 && !t.includes("|")) return false;
+  if(/@|http|www|\.com|linkedin|github|bitbucket/i.test(t)) return false;
+  if(/\d/.test(t)) return false;
+  if(/^[-•·●]/.test(t)) return false;
+  return /^[A-Za-z][A-Za-z0-9 ,&\/\-']*$/.test(t);
+}
+function dissectMeta(line){
+  const dateMatch = dateRangeOf(line) || "";
+  const dates = dateMatch.replace(/\s*[-–—]+\s*/g," – ");
+  let rest = dateMatch ? line.replace(new RegExp(regEscape(dateMatch),"i"),"") : line;
+  rest = rest.replace(/[|,\s]+$/,"").replace(/\s+[-–—]+\s+/g," — ").trim();
+  if(!rest) return { title:"", meta: dates };
+  if(rest.includes(" — ")){
+    const idx = rest.indexOf(" — ");
+    return { title: rest.slice(0,idx).trim(), meta: (rest.slice(idx+3).trim()+" | "+dates).replace(/ \| $/,"") };
+  }
+  const byBar = rest.split("|").map(s=>s.trim()).filter(Boolean);
+  if(byBar.length>=2){
+    return { title: byBar[0], meta: (byBar.slice(1).join(" | ")+" | "+dates).replace(/ \| $/,"") };
+  }
+  return { title: rest, meta: dates };
+}
+function metaFromLine(line){
+  const dateMatch = dateRangeOf(line) || "";
+  const dates = dateMatch.replace(/\s*[-–—]+\s*/g," – ");
+  const rest = dateMatch ? line.replace(new RegExp(regEscape(dateMatch),"i"),"").replace(/[|,\s]+$/,"").trim() : line.trim();
+  const cleaned = rest.replace(/\s+[-–—]+\s+/g," — ");
+  return ((cleaned?cleaned+" | ":"")+dates).replace(/ \| $/,"");
+}
+
+/* WordprocessingML paragraph helpers */
+function run(txt, rpr){ return '<w:r>'+(rpr?'<w:rPr>'+rpr+'</w:rPr>':'')+'<w:t xml:space="preserve">'+xmlEsc(txt)+'</w:t></w:r>'; }
+function para(runs, ppr){ return '<w:p>'+(ppr?'<w:pPr>'+ppr+'</w:pPr>':'')+runs+'</w:p>'; }
+function spacing(after, before){ return '<w:spacing w:after="'+(after||60)+'" w:before="'+(before||0)+'" w:line="276" w:lineRule="auto"/>'; }
+const R_NAVY = '<w:b/><w:color w:val="'+NAVY+'"/><w:sz w:val="34"/><w:spacing w:val="20"/>';
+const R_HEAD = '<w:b/><w:color w:val="'+NAVY+'"/><w:sz w:val="21"/><w:spacing w:val="12"/>';
+const R_TITLE = '<w:b/><w:color w:val="'+INK+'"/><w:sz w:val="21"/>';
+const R_META = '<w:i/><w:color w:val="'+INK+'"/><w:sz w:val="21"/>';
+const R_BODY = '<w:color w:val="'+INK+'"/><w:sz w:val="21"/>';
+const R_BULLET = '<w:color w:val="'+INK+'"/><w:sz w:val="21"/>';
+const R_HEADLINE = '<w:color w:val="'+INK+'"/><w:sz w:val="21"/>';
+const R_CONTACT = '<w:color w:val="'+INK+'"/><w:sz w:val="21"/>';
+function pName(t){ return para(run(t.toUpperCase(), R_NAVY), '<w:jc w:val="center"/><w:keepNext/>'+spacing(30)); }
+function pHeadline(t){ return para(run(t, R_HEADLINE), '<w:jc w:val="center"/><w:keepNext/>'+spacing(10,30)); }
+function pContact(t){ return para(run(t, R_CONTACT), '<w:jc w:val="center"/><w:keepNext/>'+spacing(200,10)); }
+function pHeading(t){
+  return para(run(t.toUpperCase(), R_HEAD),
+    '<w:keepNext/>'+spacing(100,260)+'<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="2" w:color="'+NAVY+'"/></w:pBdr>');
+}
+function pBody(t, rpr){ return para(run(t, rpr||R_BODY), '<w:keepLines/>'+spacing(60)); }
+function pBullet(t){
+  return para(run(t, R_BULLET),
+    '<w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr><w:ind w:left="270" w:hanging="270"/><w:keepLines/>'+spacing(40));
+}
+function pSkill(t){ return para(run(t, R_BODY), '<w:keepLines/>'+spacing(60)); }
+function pRoleTitle(t){ return para(run(t, R_TITLE), '<w:keepNext/>'+spacing(10)); }
+function metaParts(t){
+  const i = t.lastIndexOf(" | ");
+  return i === -1 ? [t, ""] : [t.slice(0,i), t.slice(i+3)];
+}
+function pMeta(t){
+  const parts = metaParts(t);
+  const runs = parts[1]
+    ? run(parts[0], R_META)+run("\t", R_META)+run(parts[1], R_META)
+    : run(parts[0], R_META);
+  return para(runs, '<w:keepNext/><w:keepLines/>'+spacing(120,0)+(parts[1]?'<w:tabs><w:tab w:val="right" w:pos="10800"/></w:tabs>':''));
+}
+function pTool(t){ return para(run(t.replace(/^TOOLS?\s*[:/]\s*/i,"").replace(/\s+[-–—]+\s+/g," • ").replace(/^•\s+|\s+•\s*$/g,"").replace(/\s+•\s+/g," • ").trim(), R_META), '<w:keepNext/><w:keepLines/>'+spacing(40)); }
+function pProjectTitle(boldPart, rest){
+  return para(run(boldPart, R_TITLE)+run(" — "+rest, R_BODY), '<w:keepNext/><w:keepLines/>'+spacing(10,80));
+}
+function parseAtsText(atsText){
+  const blocks = [];
+  const lines = atsText.split(/\r?\n/);
+  let inHeader = true, nameDone = false, headlineDone = false, contactDone = false;
+  let curSection = "", lastKind = "";
+  let pendingSkills = [], pendingSummary = [];
+  const push = (kind, text, desc)=>{ blocks.push(desc ? {kind, text, desc} : {kind, text}); };
+  const flushSkills = ()=>{ if(pendingSkills.length){ push('skill', pendingSkills.join(" • ")); pendingSkills = []; } };
+  const flushSummary = ()=>{ if(pendingSummary.length){ push('body', pendingSummary.join(" ")); pendingSummary = []; } };
+  lines.forEach(line=>{
+    const t = line.trim();
+    if(!t) return;
+    if(/^[=\-─]{4,}$/.test(t)){ inHeader = false; return; }
+    if(t.charAt(0)==="#"){ inHeader = false; return; }
+    const upper = t.toUpperCase().replace(/[:\s]+$/,"");
+    if(ATS_HEADINGS.has(upper)){
+      flushSkills(); flushSummary();
+      curSection = upper; inHeader = false; lastKind = "heading";
+      push('heading', upper);
+      return;
+    }
+    if(inHeader){
+      if(!nameDone){ push('name', t); nameDone = true; lastKind = "name"; return; }
+      if(!headlineDone && isHeadlineLine(t)){ push('headline', t); headlineDone = true; lastKind = "headline"; return; }
+      if(isContactLine(t)){ push('contact', t); contactDone = true; lastKind = "contact"; return; }
+    }
+    const bm = t.match(/^[-•·●]\s+(.*)$/);
+    if(bm){
+      if(SKILL_SECTIONS.has(curSection)){ pendingSkills.push(cleanSkill(bm[1])); lastKind = "skill"; return; }
+      flushSkills(); flushSummary();
+      push('bullet', bm[1].replace(/\s+/g," ").trim());
+      lastKind = "bullet";
+      return;
+    }
+    if(SKILL_SECTIONS.has(curSection)){ pendingSkills.push(cleanSkill(t)); lastKind = "skill"; return; }
+    if(SUMMARY_SECTIONS.has(curSection)){ pendingSummary.push(t.replace(/\s+/g," ")); lastKind = "sumtext"; return; }
+    if(EXP_SECTIONS.has(curSection)){
+      if(dateRangeOf(t)){
+        flushSkills(); flushSummary();
+        if(lastKind === "title" || lastKind === "meta"){
+          push('meta', metaFromLine(t));
+        } else {
+          const d = dissectMeta(t);
+          if(d.title) push('roleTitle', d.title);
+          push('meta', d.meta);
+        }
+        lastKind = "meta";
+        return;
+      }
+      if(t.length>=3 && t.length<=72 && /^[A-Z]/.test(t) && !/[|•]/.test(t) && !/\.$/.test(t) && !/\b(responsibilities|duties|such as)\b/i.test(t)){
+        flushSkills(); flushSummary();
+        push('roleTitle', t);
+        lastKind = "title";
+        return;
+      }
+      flushSkills(); flushSummary();
+      push('bullet', t);
+      lastKind = "body";
+      return;
+    }
+    if(/^PROJECTS/.test(curSection)){
+      if(/^(technology|tools|stack|tech)\s*[:/]/i.test(t)){
+        flushSkills(); flushSummary();
+        push('tool', t.replace(/^(?:technology|tools?|stack|tech)\s*[/:]\s*(?:tools?\s*(?:[/:]\s*)?)?/i, "").replace(/\s+[-–—]+\s+/g," • ").replace(/^•\s+|\s+•\s*$/g,"").replace(/\s+•\s+/g," • ").trim());
+        lastKind = "tool";
+        return;
+      }
+      if(t.includes(" — ")){
+        flushSkills(); flushSummary();
+        const idx = t.indexOf(" — ");
+        push('projectTitle', t.slice(0,idx).trim(), t.slice(idx+3).trim());
+        lastKind = "ptitle";
+        return;
+      }
+    }
+    flushSkills(); flushSummary();
+    push('body', t);
+    lastKind = "body";
+  });
+  flushSkills(); flushSummary();
+  return blocks;
+}
+function buildDocxXml(atsText){
+  const body = parseAtsText(atsText).map(b=>{
+    switch(b.kind){
+      case "name": return pName(b.text);
+      case "headline": return pHeadline(b.text);
+      case "contact": return pContact(b.text);
+      case "heading": return pHeading(b.text);
+      case "body": return pBody(b.text);
+      case "skill": return pSkill(b.text);
+      case "bullet": return pBullet(b.text);
+      case "roleTitle": return pRoleTitle(b.text);
+      case "meta": return pMeta(b.text);
+      case "tool": return pTool(b.text);
+      case "projectTitle": return pProjectTitle(b.text, b.desc);
+      default: return "";
+    }
+  }).join("");
+
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+    body +
+    '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="0" w:footer="0" w:gutter="0"/>' +
+    '<w:cols w:space="708"/><w:docGrid w:linePitch="312"/></w:sectPr>' +
+    '</w:body></w:document>';
+}
+function escHtml(s){
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+function blocksToHtml(blocks){
+  return blocks.map(b=>{
+    switch(b.kind){
+      case "name": return '<div class="pv-name">'+escHtml(b.text.toUpperCase())+'</div>';
+      case "headline": return '<div class="pv-headline">'+escHtml(b.text)+'</div>';
+      case "contact": return '<div class="pv-contact">'+escHtml(b.text)+'</div>';
+      case "heading": return '<div class="pv-heading">'+escHtml(b.text.toUpperCase())+'</div>';
+      case "body": return '<p class="pv-body">'+escHtml(b.text)+'</p>';
+      case "skill": return '<p class="pv-skill">'+escHtml(b.text)+'</p>';
+      case "bullet": return '<p class="pv-bullet"><span class="pv-marker">&#8226;</span>'+escHtml(b.text)+'</p>';
+      case "roleTitle": return '<p class="pv-job">'+escHtml(b.text)+'</p>';
+      case "meta": {
+        const parts = metaParts(b.text);
+        return parts[1]
+          ? '<p class="pv-meta pv-meta-row"><span class="pv-meta-l">'+escHtml(parts[0])+'</span><span class="pv-meta-r">'+escHtml(parts[1])+'</span></p>'
+          : '<p class="pv-meta">'+escHtml(parts[0])+'</p>';
+      }
+      case "tool": return '<p class="pv-meta">'+escHtml(b.text)+'</p>';
+      case "projectTitle": return '<p class="pv-proj"><b>'+escHtml(b.text)+'</b><span class="pv-proj-sep"> — </span>'+escHtml(b.desc)+'</p>';
+      default: return "";
+    }
+  }).join("");
+}
+function buildPreviewHtml(atsText){
+  return '<div class="pv-sheet">'+blocksToHtml(parseAtsText(atsText))+'</div>';
+}
+function renderPreview(){
+  const pv = document.getElementById("resumePreview");
+  if(pv) pv.innerHTML = buildPreviewHtml(document.getElementById("atsResume").value);
+}
+function showTab(which){
+  document.getElementById("tabPreview").classList.toggle("active", which === "preview");
+  document.getElementById("tabText").classList.toggle("active", which === "text");
+  document.getElementById("resumePreview").classList.toggle("hidden", which !== "preview");
+  document.getElementById("atsResume").classList.toggle("hidden", which !== "text");
+  if(which === "preview") renderPreview();
+}
+const DOCX_PARTS = {
+  "[Content_Types].xml": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+    '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
+    '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' +
+    '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' +
+    '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>' +
+    '</Types>',
+  "_rels/.rels": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>' +
+    '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>' +
+    '</Relationships>',
+  "word/_rels/document.xml.rels": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>' +
+    '</Relationships>',
+  "word/styles.xml": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+    '<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri"/><w:sz w:val="21"/><w:szCs w:val="21"/></w:rPr></w:rPrDefault>' +
+    '<w:pPrDefault><w:pPr><w:spacing w:after="80" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>' +
+    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>' +
+    '<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="430" w:hanging="350"/></w:pPr></w:style>' +
+    '</w:styles>',
+  "word/numbering.xml": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+    '<w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="singleLevel"/>' +
+    '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/>' +
+    '<w:lvlJc w:val="left"/><w:pPr><w:ind w:left="270" w:hanging="270"/></w:pPr>' +
+    '<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/></w:rPr></w:lvl></w:abstractNum>' +
+    '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>' +
+    '</w:numbering>',
+  "docProps/core.xml": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' +
+    '<dc:title>ATS Friendly Resume</dc:title><dc:creator>ATS Resume Analyzer</dc:creator>' +
+    '<cp:lastModifiedBy>ATS Resume Analyzer</cp:lastModifiedBy>' +
+    '<dcterms:created xsi:type="dcterms:W3CDTF">2024-01-01T00:00:00Z</dcterms:created>' +
+    '<dcterms:modified xsi:type="dcterms:W3CDTF">2024-01-01T00:00:00Z</dcterms:modified></cp:coreProperties>',
+  "docProps/app.xml": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">' +
+    '<Application>ATS Resume Analyzer</Application></Properties>'
+};
+async function downloadDocx(){
+  if(typeof JSZip === "undefined"){ alert("JSZip failed to load (internet needed for first use). Please reload with an internet connection."); return; }
+  const atsText = document.getElementById("atsResume").value;
+  if(!atsText.trim()){ alert("Generate the ATS resume first by running Analyze."); return; }
+  const zip = new JSZip();
+  for(const name in DOCX_PARTS){ zip.file(name, DOCX_PARTS[name]); }
+  zip.file("word/document.xml", buildDocxXml(atsText));
+  const blob = await zip.generateAsync({ type:"blob" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "ats_friendly_resume.docx";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+
+/* ---------------- REPORT ---------------- */
+function buildReportHTML(){
+  const c = compute();
+  let rows = "";
+  skillRows.forEach(r=>{
+    const status = r.self?"Self-Verified":(r.inRes&&r.inJd?"Matched":(r.inJd?"Missing":"Extra"));
+    rows += "<tr><td>"+escapeHtml(r.name)+"</td><td>"+escapeHtml(r.cat)+"</td><td>"+(r.inJd?"Yes":"No")+"</td><td>"+(r.inRes?"Yes":"No")+"</td><td>"+escapeHtml(status)+"</td></tr>";
+  });
+  let kw = "";
+  const resTok = new Set(tokens(RESUME_TEXT + "\n" + extraSkills.join("\n")));
+  jdTop.forEach(([w])=>{ kw += escapeHtml(w) + (resTok.has(w)?" (found)":" (missing)") + ", "; });
+  kw = kw.replace(/,\s*$/,"");
+
+  const esc = escapeHtml;
+  
+  // Keywords suggested for report
+  const missingSkills = c.missingList.map(r => r.name);
+  const selfVerified = c.selfList.map(r => r.name);
+  const missingKeywords = jdTop.filter(([w]) => !resTok.has(w)).map(([w]) => w);
+  const matchedSkills = c.matchedList.map(r => r.name);
+
+  return "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>ATS Job Match Report</title><style>" +
+    "body{font-family:Segoe UI,Arial,sans-serif;color:#0f172a;max-width:820px;margin:30px auto;padding:0 18px;line-height:1.55}" +
+    "h1{font-size:24px} h2{font-size:18px;border-bottom:2px solid #22d3ee;padding-bottom:6px;margin-top:34px}" +
+    "h3{font-size:15px;margin-top:20px} .score{font-size:52px;font-weight:800;color:#0f94a8}" +
+    "table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:10px}" +
+    "th,td{border:1px solid #cbd5e1;padding:7px 9px;text-align:left} th{background:#e2e8f0}" +
+    ".muted{color:#64748b;font-size:13px} .pill{display:inline-block;padding:2px 9px;border-radius:6px;margin:3px 4px 0 0;font-size:12.5px}" +
+    ".ok{background:#dcfce7;color:#166534} .miss{background:#fee2e2;color:#991b1b} .extra{background:#e2e8f0;color:#475569} .self{background:#fef3c7;color:#92400e}" +
+    ".kw{display:inline-block;padding:2px 8px;margin:2px 4px;border-radius:4px;font-size:12px;border:1px solid #cbd5e1}" +
+    ".kw-found{border-color:#86efac;background:#dcfce7;color:#166534} .kw-miss{border-color:#fca5a5;background:#fee2e2;color:#991b1b} .kw-self{border-color:#fcd34d;background:#fef3c7;color:#92400e}" +
+    ".foot{margin-top:40px;font-size:12px;color:#94a3b8}</style></head><body>" +
+    "<h1>ATS Job Match Report</h1><p class='muted'>Generated " + new Date().toLocaleString() + " | Analyzed fully in-browser</p>" +
+    "<div class='score'>" + c.score + "% Match</div>" + esc(verdictText(c)) +
+    "<p>"+esc(subText(c))+"</p>" +
+    "<table><tr><th>Metric</th><th>Value</th></tr>" +
+    "<tr><td>Overall Match</td><td>"+c.score+"%</td></tr>" +
+    "<tr><td>Skills Matched</td><td>"+c.matched+"</td></tr>" +
+    "<tr><td>Missing JD Skills</td><td>"+c.missing+"</td></tr>" +
+    "<tr><td>Extra Skills on Resume</td><td>"+c.extra+"</td></tr>" +
+    "<tr><td>Self-Verified Skills</td><td>"+c.self+"</td></tr>" +
+    "<tr><td>Top Keyword Coverage</td><td>"+c.kwHit+"/"+jdTop.length+" ("+c.kwOverlap.toFixed(0)+"%)</td></tr></table>" +
+
+    "<h2>Skills Checklist vs. the Job Description</h2><table><thead><tr><th>Skill</th><th>Category</th><th>In JD</th><th>On Resume</th><th>Status</th></tr></thead><tbody>" + rows + "</tbody></table>" +
+
+    "<h2>Strengths (matched skills)</h2>" + pillsHtml(c.matchedList.join("|"),"ok") +
+    (c.self ? "<h3>Self-verified (you confirmed you have them — add them to your resume)</h3>" + pillsHtml(c.selfList.join("|"),"self") : "") +
+    "<h2>Gaps / Missing JD Skills</h2>" + pillsHtml(c.missingList.join("|"),"miss") +
+    "<h2>Additional Skills (on resume, not asked by JD)</h2>" + pillsHtml(c.extraList.join("|"),"extra") +
+
+    "<h2>Key Words Suggested (Copy into Your Resume)</h2>" +
+    (missingSkills.length ? "<h3>Missing Required Skills (Add if you have them):</h3><p>" + missingSkills.map(s => "<span class='kw kw-miss'>"+esc(s)+"</span>").join(" ") + "</p>" : "") +
+    (missingKeywords.length ? "<h3>Missing JD Keywords (Add if relevant):</h3><p>" + missingKeywords.map(w => "<span class='kw kw-miss'>"+esc(w)+"</span>").join(" ") + "</p>" : "") +
+    (selfVerified.length ? "<h3>Self-Verified Skills (Add to resume now):</h3><p>" + selfVerified.map(s => "<span class='kw kw-self'>"+esc(s)+"</span>").join(" ") + "</p>" : "") +
+    (matchedSkills.length ? "<h3>Matched Skills (Reinforce in Summary/Experience):</h3><p>" + matchedSkills.map(s => "<span class='kw kw-found'>"+esc(s)+"</span>").join(" ") + "</p>" : "") +
+
+    "<h2>Where to Improve Your Resume</h2>" +
+    (c.missingList.length ? 
+      "<h3>1. Add Missing Required Skills</h3><p class='muted'>These skills are explicitly required by the JD but not on your resume. Only add ones you can genuinely demonstrate:</p>" + 
+      (function(){ let byCat={}; c.missingList.forEach(r=>{ (byCat[r.cat]=byCat[r.cat]||[]).push(r.name); }); let out=""; for(const cat in byCat){ out += "<p><strong>"+esc(cat)+":</strong> "+byCat[cat].map(s=>"<span class='pill miss'>"+esc(s)+"</span>").join(" ")+"</p>"; } return out; })()
+      : "") +
+    (missingKeywords.length ? 
+      "<h3>2. Incorporate Missing JD Keywords</h3><p class='muted'>High-frequency JD keywords missing from your resume. Weave them naturally into Summary, Skills, or Experience (only if accurate):</p><p>" + 
+      missingKeywords.map(w => "<span class='kw kw-miss'>"+esc(w)+"</span>").join(" ") + "</p>"
+      : "") +
+    (c.selfList.length ? 
+      "<h3>3. Add Your Self-Verified Skills</h3><p class='muted'>You confirmed you have these but they're not on your resume. Add them to Skills section:</p><p>" + 
+      c.selfList.map(r => "<span class='pill self'>"+esc(r.name)+"</span>").join(" ") + "</p>"
+      : "") +
+    "<h3>4. Resume Structure Improvements</h3><ol>" +
+    "<li>Use standard ATS headings: PROFESSIONAL SUMMARY, CORE COMPETENCIES, PROFESSIONAL EXPERIENCE, EDUCATION, CERTIFICATIONS</li>" +
+    "<li>Lead experience bullets with action verbs + quantified results (e.g., 'Reduced processing time 30% by implementing...')</li>" +
+    "<li>Match JD phrasing exactly for key skills (if JD says 'cloud infrastructure', use that exact term)</li>" +
+    "<li>Keep layout single-column; avoid tables, graphics, columns, or text boxes that break parsers</li>" +
+    "<li>Include a dedicated Skills section with bullet-separated competencies (parsers read these first)</li>" +
+    "</ol>" +
+    (function(){ 
+      const expSec = findSection(sectionSplit(RESUME_TEXT), ["EXPERIENCE","WORK EXPERIENCE","PROFESSIONAL EXPERIENCE","CAREER HISTORY","EMPLOYMENT","INTERNSHIP"]); 
+      if(!expSec || !expSec.lines.filter(l=>l.trim()).length){
+        return "<h3>5. Add Professional Experience</h3><p class='muted'>No experience section detected. Add work history with company, role, dates, and 3-5 quantified bullets per role.</p>";
+      }
+      return "";
+    })() +
+
+    "<div class='foot'>Generated by the ATS Resume Analyzer & Job Match tool. This is an estimate based on keyword/skill overlap, not a guarantee of an employer's ATS decision.</div>" +
+    "</body></html>";
+}
+function cellsToPills(arr, cls){
+  if(!arr || !arr.length) return "<p class='muted'>None</p>";
+  const pills = arr.map(x=>"<span class='pill "+cls+"'>"+escapeHtml(x)+"</span>").join(" ");
+  return "<p>"+pills+"</p>";
+}
+function pillsHtml(names, cls){ return cellsToPills(names.split("|").filter(Boolean), cls); }
+function verdictText(c){ return c.score>=85?"Excellent match":c.score>=70?"Good match":c.score>=50?"Average match":c.score>=30?"Weak match":"Poor match"; }
+function subText(c){
+  if(c.score>=85) return "You are a strong candidate. Reinforce the matched items and quantify accomplishments.";
+  if(c.score>=70) return "Solid fit. Close the remaining gaps by adding keywords you genuinely possess.";
+  if(c.score>=50) return "A base exists, but several required skills are missing or not visible on the resume.";
+  if(c.score>=30) return "Significant gaps. Add genuinely-missing skills under self-verification or reconsider fit.";
+  return "This role requires skills your profile barely shows. Use the gap list to build skills or find a better-matching role.";
+}
+
+function downloadBlob(name, content, type){
+  const blob = new Blob([content], { type: type || "text/html" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+function downloadReport(){
+  const html = buildReportHTML();
+  downloadBlob("ats_job_match_report.html", html, "text/html");
+  alert("Report downloaded as 'ats_job_match_report.html'. Open it in a browser and use Print/Save-as-PDF to make a PDF.");
+}
+function printReport(){
+  const w = window.open("", "_blank");
+  w.document.write(buildReportHTML());
+  w.document.close();
+  setTimeout(()=>{ w.focus(); w.print(); }, 400);
+}
+
+renderChips();
+document.getElementById("atsResume").addEventListener("input", renderPreview);
+</script>
+</body>
+</html>
