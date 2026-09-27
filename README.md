@@ -366,6 +366,16 @@ real ink on it, so a blank or grey "successful" export fails the run. Override t
 CHROME_PATH="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" npm run test:browser
 ```
 
+To check a build that is already deployed instead of the local one, point the same suite at it and skip the build
+entirely. This is the only way to verify the artifact users actually load rather than the copy in `dist/`:
+
+```bash
+BASE_URL=https://athikahmd76-stack.github.io/resume-rewriter-studio node scripts/browser-check.mjs
+```
+
+Keep the project path in `BASE_URL`. It is a full site URL, not a host, so a `github.io/<repo>/` deployment needs
+the repository segment.
+
 The analysis has its own coverage on both levels. `npm run test` asserts the scorers are deterministic, that the
 weights sum to 1, that an empty job description still produces a defined score, that the four SWOT quadrants always
 come back non-empty with evidence, and that no report format can state a number the others disagree with.

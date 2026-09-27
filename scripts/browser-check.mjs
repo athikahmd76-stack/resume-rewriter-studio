@@ -3,9 +3,15 @@
  *
  *   node scripts/browser-check.mjs            (runs `vite preview` itself)
  *   BROWSER=msedge node scripts/browser-check.mjs
+ *   BASE_URL=https://example.github.io/app node scripts/browser-check.mjs
  *
- * Covers: app boot, demo load, rewrite, all four tabs, the editor, version
- * history, both downloads, print styles and console errors.
+ * BASE_URL points the same suite at an already-deployed build instead of the
+ * local one, which is the only way to check the artifact that users actually
+ * load rather than the copy in dist/.
+ *
+ * Covers: app boot, demo load, rewrite, all five tabs, the editor, version
+ * history, the report downloads, the resume downloads, print styles, and
+ * console errors.
  */
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -81,13 +87,32 @@ const measureCoverage = async (page, bytes) => page.evaluate(async (b64) => {
   return { width: img.width, height: img.height, white: white / total, ink: ink / total, darkest: Math.round(darkest) };
 }, bytes.toString('base64'));
 
-const { createServer, preview } = await import('vite');
-const { fileURLToPath } = await import('node:url');
-const root = fileURLToPath(new URL('..', import.meta.url));
-const server = await createServer({ root, configFile: join(root, 'vite.config.js'), logLevel: 'error' });
-const built = await preview({ previewServer: { port: PORT, strictPort: true, host: '127.0.0.1' }, root, configFile: join(root, 'vite.config.js'), logLevel: 'error' });
-const resolved = new URL(built.resolvedUrls.local[0]);
-const base = resolved.origin;
+/**
+ * A deployed site URL, normalised without its trailing slash.
+ *
+ * The path is deliberately kept: a project Pages site lives under /<repo>/ and
+ * URL.origin would silently drop that segment, so a github.io/<repo>/ target
+ * would be fetched from the domain root and 404.
+ */
+const deployedUrl = () => {
+  const raw = (process.env.BASE_URL || '').trim();
+  if (!raw) return null;
+  return new URL(raw).href.replace(/\/+$/, '');
+};
+
+const external = deployedUrl();
+let server = null;
+let built = null;
+let base = external;
+if (!base) {
+  const { createServer, preview } = await import('vite');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  server = await createServer({ root, configFile: join(root, 'vite.config.js'), logLevel: 'error' });
+  built = await preview({ previewServer: { port: PORT, strictPort: true, host: '127.0.0.1' }, root, configFile: join(root, 'vite.config.js'), logLevel: 'error' });
+  base = new URL(built.resolvedUrls.local[0]).origin;
+}
+console.log(`\ntarget: ${base}${external ? ' (deployed build, no local server)' : ' (local build)'}`);
 
 let browser;
 const crashInfo = [];
@@ -380,8 +405,8 @@ try {
 } finally {
   if (crashInfo.length) console.log(`\nbrowser events: ${crashInfo.join(', ')}`);
   await browser?.close();
-  server.close();
-  await built.httpServer.close();
+  if (built) await built.httpServer.close();
+  await server?.close();
   void pathToFileURL;
 }
 
