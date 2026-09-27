@@ -112,11 +112,65 @@ export const countTermMentions = (text, term) => {
  */
 export const findSynonymMatches = (resumeText, term) => {
   const found = [];
-  for (const syn of getSynonyms(term)) {
+  for (const syn of getSynonymsDeep(term)) {
     if (textMentionsTerm(resumeText, syn)) found.push(syn);
   }
   return found;
 };
+
+/**
+ * Synonyms of a term, including the ones registered against its head noun.
+ *
+ * The dictionary is keyed by single words, so a multi-word job-description term
+ * like "statistical forecasting" had no entry at all and could never be
+ * recognised. The head noun carries the competency in English noun phrases, so
+ * "forecasting" is consulted for "statistical forecasting". Restricting the
+ * expansion to the last word keeps this narrow: it cannot drag in the meaning of
+ * a modifier, and a bare word still resolves to itself.
+ */
+export const getSynonymsDeep = (term) => {
+  const base = normalizeKeyword(term);
+  if (!base) return [];
+  const out = [base];
+  const push = (list) => {
+    for (const s of list || []) {
+      const n = normalizeKeyword(s);
+      if (n && n !== base && !out.includes(n)) out.push(n);
+    }
+  };
+  push(getSynonyms(base));
+  const words = base.split(' ').filter(Boolean);
+  const head = words[words.length - 1];
+  if (words.length > 1 && head) push(getSynonyms(head));
+  return out;
+};
+
+/**
+ * Does the text demonstrate this term, either literally or through a
+ * meaning-preserving synonym from the local dictionary?
+ *
+ * This is the honesty test used for scoring. A posting that asks for
+ * "statistical forecasting" and a resume that says "demand planning" describe
+ * the same competency, so counting that as a gap penalises the candidate for
+ * their wording rather than their experience. It reports coverage only - it never
+ * writes the term into the resume, and the rewriter still refuses to substitute
+ * a phrase the substitution map does not explicitly allow.
+ */
+export const coversTerm = (text, term) => (
+  textMentionsTerm(text, term) || findSynonymMatches(text, term).length > 0
+);
+
+/**
+ * Shown wherever a component counts job keywords and the rewrite cannot move it.
+ *
+ * These components credit a keyword when the resume states it, or when the
+ * posting words the same competency differently and the local synonym dictionary
+ * recognises the two as equivalent, so a candidate is not docked for their
+ * choice of words. It is a ceiling rather than a defect: the keywords left over
+ * are the ones the resume genuinely does not evidence, and those stay in the
+ * missing list instead of being written into the document.
+ */
+export const KEYWORD_EVIDENCE_REASON = 'This counts the job keywords your resume already states, plus keywords the posting words differently where they mean the same thing. Anything else the job asks for and your resume does not evidence is listed as missing and left out of the document, so this stops where your real experience stops.';
 
 /** Expand a term into itself + its dictionary synonyms. */
 export const expandTerm = (term) => {

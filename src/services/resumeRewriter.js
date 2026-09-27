@@ -451,16 +451,21 @@ const rewriteBullet = ({ text, settings, insertable, tense, log, location }) => 
 
   // 5. achievement framing
   if (settings.strengthenAchievements) {
-    const metric = out.match(METRIC_RE);
     // Only re-order a clause that already reads as an outcome, and only at an
     // existing clause boundary - never mid-phrase, which would strand a comma.
+    // The metric match is part of the precondition: re-framing exists to keep a
+    // metric attached to its outcome, so text with no recognisable metric is
+    // left alone. Clamping at an existing boundary can also drop the digits, so
+    // the metric is re-read from the final text rather than the pre-reorder one.
+    const metric = out.match(METRIC_RE);
     const m = out.match(/^(.*?)[,;]\s+([^.]{6,120}\d[^.]{0,80})\.?$/i);
-    if (m && m[1] && m[2] && m[1].trim().length > 18 && RESULT_CLAUSE_RE.test(m[2].trim())) {
+    if (metric && m && m[1] && m[2] && m[1].trim().length > 18 && RESULT_CLAUSE_RE.test(m[2].trim())) {
       const candidate = endWithPeriod(collapseWhitespace(`${m[1].trim().replace(/[.,]\s*$/, '')}, ${m[2].trim().replace(/[.,]\s*$/, '')}`));
       const sim = similarity(candidate, out);
-      if (sim > 0.72 && sim < 0.995) {
+      const kept = candidate.match(METRIC_RE);
+      if (sim > 0.72 && sim < 0.995 && kept) {
         out = candidate;
-        RECORD(log, { type: 'achievement', location, from: text, to: out, label: `Metric preserved and outcome wording tightened (${metric[0]})` });
+        RECORD(log, { type: 'achievement', location, from: text, to: out, label: `Metric preserved and outcome wording tightened (${kept[0]})` });
       }
     }
   }

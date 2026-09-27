@@ -14,6 +14,7 @@ import {
   reportToMarkdown, reportToText, reportToHtml, reportToJson, REPORT_FORMATS,
 } from '../src/services/reportBuilder.js';
 import { resumeToText, experienceBullets } from '../src/services/resumeModel.js';
+import { scoreAts } from '../src/services/atsScorer.js';
 import { DEMO_PARSED, DEMO_JD, DEMO_KEYWORDS, DEMO_ROLE } from '../src/data/sampleData.js';
 
 installDomParser();
@@ -247,9 +248,24 @@ console.log('\n12. score movement regressions');
 
   // Duplicate content and missing keywords used to be scored from the ORIGINAL
   // resume's match data on both sides, so the optimized side could never move.
+  // Proving they are per-resume needs a resume that actually gains the keyword,
+  // because the demo already covers everything it can honestly evidence and the
+  // two documents legitimately score the same. Re-score the same document with a
+  // genuinely absent job keyword added to its text: if the component is reading
+  // the text in front of it, the number has to move. This one is a penalty
+  // (100 is a clean sheet), so clearing a gap has to pull it down.
   const mk = (side) => out.scores[side].components.find((c) => c.id === 'missingKeywords').value;
   const dup = (side) => out.scores[side].components.find((c) => c.id === 'duplicateContent').value;
-  check('missing keywords is scored per resume', mk('original') !== mk('optimized') || out.changeLog.filter((c) => c.type === 'keyword').length === 0, `${mk('original')}% -> ${mk('optimized')}%`);
+  const absent = out.match.missing.find((k) => !optimizedText.toLowerCase().includes(k.term.toLowerCase()));
+  const boosted = scoreAts(
+    { ...out.optimizedResume, skills: [{ id: 'skills', heading: 'Skills', items: [...(absent ? [absent.term] : []), 'Excel', 'Power BI'] }] },
+    out.jd,
+    out.match,
+    { userKeywords: out.userKeywords },
+  );
+  const mkBoosted = boosted.components.find((c) => c.id === 'missingKeywords').value;
+  check('missing keywords is scored per resume', !!absent && mkBoosted < mk('optimized'),
+    `${mk('original')}% -> ${mk('optimized')}%, and ${mk('optimized')}% -> ${mkBoosted}% once "${absent?.term || 'n/a'}" is present`);
   check('duplicate content is scored per resume', typeof dup('original') === 'number' && typeof dup('optimized') === 'number', `${dup('original')}% -> ${dup('optimized')}%`);
 
   const optAts = out.scores.optimized.overall;
@@ -351,6 +367,125 @@ console.log('\n16. a generated summary invents no tenure figure');
   check('the generated summary introduced no number', !/\d/.test(r.optimizedResume.summary || ''), r.optimizedResume.summary);
   check('a generated summary counts as a real section', (r.optimizedResume.sections || []).some((s) => s.id === 'summary'));
   check('the guard is clean after generating a summary', r.guard.blocked.length === 0, r.guard.blocked.map((b) => b.detail).join('; '));
+}
+
+console.log('\n17. a bullet the rewriter cannot parse never fails the run');
+{
+  // An em dash before a digit left the metric matcher with nothing to compare and
+  // it indexed into null, which surfaced to the user as "The rewrite could not be
+  // completed" and lost the whole document. Every shape below used to be a hard
+  // failure, so the guard is what keeps a single awkward bullet from costing the
+  // candidate their rewrite.
+  const awkward = [
+    'Built SQL dashboards \u2014 cutting reporting time by 10 hours; delivered with a 4-person team.',
+    'Cut 30% of stock aged over 90 days \u2014 then rebuilt the replenishment report around it.',
+    'Reduced returns by \u2014 18% while covering the full 12-month peak.',
+    'Delivered the migration ahead of schedule by 6 weeks \u2014 2 sites, zero downtime.',
+    'Automated the weekly pack \u2014 5 tabs, 3 hours a week back.',
+    'Owned the budget of \u2014 $1.2m across 4 cost centres.',
+    'Grew the team from \u2014 6 to 11 analysts in 2 years.',
+    'No numbers at all \u2014 just a description of the work done.',
+    'Improved availability from 99.1% \u2014 to 99.95% across the estate.',
+    'Cut 25% \u2014 and kept headcount flat while doing it.',
+  ];
+  const r = await runPipeline({
+    preparsed: {
+      kind: 'docx',
+      pageCount: 1,
+      text: '',
+      blocks: [
+        { type: 'paragraph', text: 'Data Analyst', fontSize: 20, bold: true, align: 'center', bullet: false, marker: null, level: 0 },
+        { type: 'paragraph', text: 'a@b.com  |  Manchester, UK', fontSize: 9, bold: false, align: 'center', bullet: false, marker: null, level: 0 },
+        { type: 'paragraph', text: 'Professional Experience', fontSize: 12, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+        { type: 'paragraph', text: 'Data Analyst  |  Acme Retail  |  Manchester, UK  |  Mar 2021 - Present', fontSize: 10.5, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+        ...awkward.map((t) => ({ type: 'bullet', text: t, fontSize: 10, bold: false, align: 'left', bullet: true, marker: '\u2022', level: 0 })),
+        { type: 'paragraph', text: 'Skills', fontSize: 12, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+        { type: 'paragraph', text: 'Excel, Power BI', fontSize: 10, bold: false, align: 'left', bullet: false, marker: null, level: 0 },
+      ],
+    },
+    jobDescription: 'Data Analyst role. SQL, Excel and Power BI required.',
+    targetRole: 'Data Analyst',
+    onProgress: () => {},
+  });
+  const after = resumeToText(r.optimizedResume);
+  const kept = awkward.filter((t) => after.includes(t)).length;
+  check('all awkward bullets survive the rewrite', kept === awkward.length, `${kept}/${awkward.length} kept verbatim`);
+  check('a document of unparseable bullets still scores', typeof r.scores.optimized.overall === 'number', `${r.scores.original.overall}% -> ${r.scores.optimized.overall}%`);
+  check('the guard is clean on awkward bullets', r.guard.blocked.length === 0, r.guard.blocked.map((b) => b.detail).join('; '));
+}
+
+console.log('\n18. a keyword the posting words differently is not scored as absent');
+{
+  // The synonym dictionary is keyed by single words, so a multi-word posting term
+  // like "statistical forecasting" had no entry and could never be recognised.
+  // The posting asks for it, the resume says "demand planning", and both name the
+  // same competency, so the candidate was being docked for their wording.
+  const r = await runPipeline({
+    preparsed: {
+      kind: 'docx',
+      pageCount: 1,
+      text: '',
+      blocks: [
+        { type: 'paragraph', text: 'Data Analyst', fontSize: 20, bold: true, align: 'center', bullet: false, marker: null, level: 0 },
+        { type: 'paragraph', text: 'a@b.com  |  Manchester, UK', fontSize: 9, bold: false, align: 'center', bullet: false, marker: null, level: 0 },
+        { type: 'paragraph', text: 'Professional Summary', fontSize: 12, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+        { type: 'paragraph', text: 'Data analyst focused on demand planning and stock management.', fontSize: 10, bold: false, align: 'left', bullet: false, marker: null, level: 0 },
+        { type: 'paragraph', text: 'Professional Experience', fontSize: 12, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+        { type: 'paragraph', text: 'Data Analyst  |  Acme  |  Manchester  |  Mar 2021 - Present', fontSize: 10.5, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+        { type: 'bullet', text: 'Ran demand planning for the retail team and reported weekly figures to leadership.', fontSize: 10, bold: false, align: 'left', bullet: true, marker: '\u2022', level: 0 },
+        { type: 'paragraph', text: 'Skills', fontSize: 12, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+        { type: 'paragraph', text: 'Excel, Power BI', fontSize: 10, bold: false, align: 'left', bullet: false, marker: null, level: 0 },
+      ],
+    },
+    jobDescription: 'Data Analyst role. You will own statistical forecasting and demand forecasting for the business. Excel required.',
+    targetRole: 'Data Analyst',
+    onProgress: () => {},
+  });
+  check('a differently-worded posting term is not reported missing', !r.match.missing.some((k) => /statistical forecasting/i.test(k.term)), r.match.missing.map((k) => k.term).join(' | ') || 'none missing');
+  check('it is reported as a synonym of what the resume says', r.match.synonyms.some((s) => /statistical forecasting/i.test(s.term) && /demand planning/i.test(s.resumeTerm || '')), r.match.synonyms.map((s) => `${s.term}<-${s.resumeTerm}`).join(' | ') || 'none');
+  const kc = r.scores.original.components.find((c) => c.id === 'keywordCoverage').value;
+  check('the synonym counts towards keyword coverage', kc > 20, `${kc}%`);
+  check('recognising a synonym still writes nothing new', !/statistical forecasting/i.test(resumeToText(r.optimizedResume)));
+}
+
+console.log('\n19. a job advert never contributes its own noise to the gap list');
+{
+  const r = await runPipeline({
+    preparsed: { kind: 'docx', pageCount: 1, text: '', blocks: [
+      { type: 'paragraph', text: 'Data Analyst', fontSize: 20, bold: true, align: 'center', bullet: false, marker: null, level: 0 },
+      { type: 'paragraph', text: 'a@b.com', fontSize: 9, align: 'center' },
+      { type: 'paragraph', text: 'Professional Summary', fontSize: 12, bold: true },
+      { type: 'paragraph', text: 'Data analyst with reporting experience.' },
+      { type: 'paragraph', text: 'Professional Experience', fontSize: 12, bold: true },
+      { type: 'paragraph', text: 'Data Analyst  |  Acme  |  Mar 2021 - Present', fontSize: 10.5, bold: true },
+      { type: 'bullet', text: 'Produced the weekly reporting pack for the retail team.', fontSize: 10, bullet: true, marker: '\u2022' },
+      { type: 'paragraph', text: 'Skills', fontSize: 12, bold: true },
+      { type: 'paragraph', text: 'Excel' },
+    ] },
+    jobDescription: [
+      'Supply Chain Analyst - Manchester (Hybrid)',
+      '',
+      'Location: Manchester city centre, hybrid working, 3 days on site',
+      'Salary: \u00a335,000 - \u00a340,000 per annum',
+      'Benefits: Private medical, 28 days holiday, cycle to work scheme',
+      'Email your CV to jobs@example.com',
+      '',
+      'About the role',
+      'You will build SQL dashboards and automate the weekly reporting pack.',
+      'We are looking for someone with experience in statistical forecasting.',
+      'Highly desirable: Python exposure for data extraction.',
+      'The successful candidate will partner closely with the supply team.',
+    ].join('\n'),
+    targetRole: 'Supply Chain Analyst',
+    onProgress: () => {},
+  });
+  const missing = r.match.missing.map((k) => k.term);
+  const junk = missing.filter((t) => /manchester|hybrid|salary|annum|benefits|medical|holiday|cycle|email|example\.com|desirable|exposure|closely|^\d/i.test(t));
+  check('no location, salary or contact boilerplate in the gaps', junk.length === 0, junk.join(' | ') || `none of ${missing.length}`);
+  check('the role title is the whole heading', r.jd.title === 'Supply Chain Analyst', r.jd.title);
+  check('no fragment of the role title is asked for', !missing.some((t) => t === 'analyst' || t === 'chain analyst' || t === 'supply'), missing.join(' | ') || 'none missing');
+  check('the real skills are still asked for', ['sql', 'forecasting'].every((t) => missing.some((m) => m.includes(t))), missing.join(' | '));
+  check('filler is trimmed off the real terms', !missing.some((t) => /^(build|using|highly|partners?) /i.test(t)), missing.join(' | ') || 'none missing');
 }
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}\n`);

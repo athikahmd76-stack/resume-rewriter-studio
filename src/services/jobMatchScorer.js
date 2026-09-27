@@ -21,7 +21,7 @@
 
 import { resumeToText, experienceBullets } from './resumeModel.js';
 import { clampPercent, similarity, countWords } from '../utils/textUtils.js';
-import { textMentionsTerm, normalizeKeyword } from '../utils/keywordUtils.js';
+import { textMentionsTerm, coversTerm, normalizeKeyword, KEYWORD_EVIDENCE_REASON } from '../utils/keywordUtils.js';
 import { hasMetric } from './resumeParser.js';
 
 const WEIGHTS = {
@@ -84,7 +84,7 @@ export const scoreJobMatch = (resume, jd, match, options = {}) => {
 
   // --- 1. weighted keyword coverage ----------------------------------------
   const pool = buildWeightedPool(jd, match);
-  const hits = pool.filter((p) => textMentionsTerm(lowerText, p.term));
+  const hits = pool.filter((p) => coversTerm(lowerText, p.term));
   const hitKeys = new Set(hits.map((p) => normalizeKeyword(p.term) || p.term.toLowerCase()));
   const totalWeight = pool.reduce((a, p) => a + p.weight, 0);
   const hitWeight = hits.reduce((a, p) => a + p.weight, 0);
@@ -93,7 +93,7 @@ export const scoreJobMatch = (resume, jd, match, options = {}) => {
   // --- 2. required skills ---------------------------------------------------
   const required = (jd?.requiredSkills?.length ? jd.requiredSkills : (jd?.hardRequirements || [])).slice(0, 30);
   const skillContext = `${(resume?.skills || []).flatMap((s) => (s.items ? [s.label, ...s.items] : [s])).join(' ')} ${lowerText}`;
-  const requiredHits = required.filter((s) => textMentionsTerm(skillContext, s));
+  const requiredHits = required.filter((s) => coversTerm(skillContext, s));
   const requiredSkills = required.length ? pct(requiredHits.length, required.length) : 60;
 
   // --- 3. role alignment ----------------------------------------------------
@@ -119,7 +119,7 @@ export const scoreJobMatch = (resume, jd, match, options = {}) => {
   const jdLongWords = (jd?.responsibilities || [])
     .flatMap((r) => String(r).toLowerCase().split(/[^a-z0-9+#/.-]+/))
     .filter((w) => w.length > 5);
-  const jdTermHits = jdTerms.filter((t) => textMentionsTerm(lowerText, t));
+  const jdTermHits = jdTerms.filter((t) => coversTerm(lowerText, t));
   const jdWordHits = jdLongWords.filter((w) => lowerText.includes(w));
   const jdLanguage = jdTerms.length
     ? clampPercent((jdTermHits.length / jdTerms.length) * 70 + (jdLongWords.length ? (jdWordHits.length / jdLongWords.length) * 30 : 30))
@@ -139,8 +139,24 @@ export const scoreJobMatch = (resume, jd, match, options = {}) => {
   const evidenceStrength = clampPercent(quantRatio * 40 + sectionRatio * 30 + breadth * 15 + lengthFit * 15);
 
   const components = [
-    { id: 'keywordCoverage', label: 'Keyword Coverage', value: keywordCoverage, weight: WEIGHTS.keywordCoverage, hint: 'Weighted share of the keywords this job asks for that your resume actually contains.' },
-    { id: 'requiredSkills', label: 'Required Skills', value: requiredSkills, weight: WEIGHTS.requiredSkills, hint: 'Must-have skills listed in the posting, found in your resume.' },
+    {
+      id: 'keywordCoverage',
+      label: 'Keyword Coverage',
+      value: keywordCoverage,
+      weight: WEIGHTS.keywordCoverage,
+      hint: 'Weighted share of the keywords this job asks for that your resume actually contains.',
+      movable: 'conditional',
+      lockedReason: KEYWORD_EVIDENCE_REASON,
+    },
+    {
+      id: 'requiredSkills',
+      label: 'Required Skills',
+      value: requiredSkills,
+      weight: WEIGHTS.requiredSkills,
+      hint: 'Must-have skills listed in the posting, found in your resume.',
+      movable: 'conditional',
+      lockedReason: KEYWORD_EVIDENCE_REASON,
+    },
     {
       id: 'roleAlignment',
       label: 'Role Alignment',

@@ -77,9 +77,14 @@ export const resumeToText = (resume) => {
   parts.push(...(resume.skills || []).flatMap((s) => (s.items ? [s.label, ...s.items] : [s])));
   for (const c of resume.certifications || []) parts.push(...(c.parts || []), c.name, c.issuer, c.year, c.detail);
   for (const pr of resume.projects || []) parts.push(pr.name, pr.role, pr.dates, pr.detail, ...(pr.bullets || []));
-  parts.push(...(resume.achievements || []).flatMap((a) => (a.parts || [])));
-  parts.push(...(resume.languages || []).flatMap((l) => (l.parts || [])));
-  for (const o of resume.other || []) parts.push(...(o.parts || []));
+  // These three sections are stored as { text, parts }. The rewriter edits
+  // `text` and the DOCX/PDF exporters render `text`, so the scorer has to read
+  // `text` too. Reading `parts` here meant a rewritten achievement showed up in
+  // the exported document but was invisible to keyword matching and the ATS
+  // score, which is exactly the kind of change that appears to do nothing.
+  for (const a of resume.achievements || []) parts.push(a?.text || a, ...((a?.parts || []).filter((p) => p !== a?.text)));
+  for (const l of resume.languages || []) parts.push(l?.text || l, ...((l?.parts || []).filter((p) => p !== l?.text)));
+  for (const o of resume.other || []) parts.push(o?.text || o, ...((o?.parts || []).filter((p) => p !== o?.text)));
   return parts.filter(Boolean).join('\n');
 };
 

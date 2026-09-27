@@ -22,7 +22,7 @@
 import { STRONG_VERB_SET, ACHIEVEMENT_VERBS, LEADERSHIP_VERBS, ANALYTICAL_VERBS } from '../data/actionVerbs.js';
 import { resumeToText, experienceBullets } from './resumeModel.js';
 import { countWords, clampPercent, similarity } from '../utils/textUtils.js';
-import { textMentionsTerm, normalizeKeyword } from '../utils/keywordUtils.js';
+import { textMentionsTerm, coversTerm, normalizeKeyword, KEYWORD_EVIDENCE_REASON } from '../utils/keywordUtils.js';
 import { hasMetric } from './resumeParser.js';
 import { CANONICAL_SECTION_ORDER } from '../data/sectionDictionary.js';
 import { auditResumeRepetition } from './keywordMatcher.js';
@@ -90,9 +90,9 @@ export const scoreAts = (resume, jd, match, options = {}) => {
     seenTarget.add(t.term);
     return true;
   });
-  const matchedTargets = uniqueTargets.filter((t) => textMentionsTerm(lowerText, t.term));
+  const matchedTargets = uniqueTargets.filter((t) => coversTerm(lowerText, t.term));
   const userTargets = (match ? [...match.matched, ...match.missing] : []).filter((m) => m.source === 'user' || m.source === 'target-role');
-  const userMatched = userTargets.filter((m) => textMentionsTerm(lowerText, m.term));
+  const userMatched = userTargets.filter((m) => coversTerm(lowerText, m.term));
   const keywordCoverage = uniqueTargets.length
     ? clampPercent(
       // The JD share of the score has to be scaled to 0-100 before it is
@@ -106,7 +106,7 @@ export const scoreAts = (resume, jd, match, options = {}) => {
 
   // --- 2. JD relevance -----------------------------------------------------
   const jdTerms = (jd?.domainTerms?.length ? jd.domainTerms : (jd?.technologies || [])).slice(0, 30);
-  const jdHit = jdTerms.filter((t) => textMentionsTerm(lowerText, t));
+  const jdHit = jdTerms.filter((t) => coversTerm(lowerText, t));
   const jdResponsibilityWords = (jd?.responsibilities || [])
     .flatMap((r) => String(r).toLowerCase().split(/[^a-z0-9+#/.-]+/))
     .filter((w) => w.length > 5);
@@ -118,7 +118,7 @@ export const scoreAts = (resume, jd, match, options = {}) => {
   // --- 3. skill alignment --------------------------------------------------
   const resumeSkillText = (resume?.skills || []).flatMap((s) => (s.items ? [s.label, ...s.items] : [s])).join(' ');
   const requiredSkills = (jd?.requiredSkills?.length ? jd.requiredSkills : (jd?.technologies || [])).slice(0, 25);
-  const skillHits = requiredSkills.filter((s) => textMentionsTerm(`${resumeSkillText} ${lowerText}`, s));
+  const skillHits = requiredSkills.filter((s) => coversTerm(`${resumeSkillText} ${lowerText}`, s));
   const skillAlignment = requiredSkills.length ? pct(skillHits.length, requiredSkills.length) : 60;
   const skillCount = (resume?.skills || []).reduce((acc, g) => acc + (g.items?.length || 0), 0);
 
@@ -190,7 +190,7 @@ export const scoreAts = (resume, jd, match, options = {}) => {
     seenMissing.add(key);
     return true;
   });
-  const stillMissing = uniqueHigh.filter((t) => !textMentionsTerm(lowerText, t.term));
+  const stillMissing = uniqueHigh.filter((t) => !coversTerm(lowerText, t.term));
   const missingKeywords = stillMissing.length
     ? clampPercent(100 - Math.min(100, stillMissing.length * 12))
     : (uniqueHigh.length ? 100 : 92);
@@ -204,9 +204,25 @@ export const scoreAts = (resume, jd, match, options = {}) => {
   // not allowed to make. The UI shows the reason instead of leaving the user
   // looking at a delta of zero and assuming the rewrite did nothing.
   const components = [
-    { id: 'keywordCoverage', label: 'Keyword Match', value: keywordCoverage, weight: WEIGHTS.keywordCoverage, hint: 'Share of job-description and target keywords present in the resume.' },
+    {
+      id: 'keywordCoverage',
+      label: 'Keyword Match',
+      value: keywordCoverage,
+      weight: WEIGHTS.keywordCoverage,
+      hint: 'Share of job-description and target keywords present in the resume.',
+      movable: 'conditional',
+      lockedReason: KEYWORD_EVIDENCE_REASON,
+    },
     { id: 'jdRelevance', label: 'JD Alignment', value: jdRelevance, weight: WEIGHTS.jdRelevance, hint: 'How much of the resume language maps onto the job description.' },
-    { id: 'skillAlignment', label: 'Skill Match', value: skillAlignment, weight: WEIGHTS.skillAlignment, hint: 'Required skills found versus required skills requested.' },
+    {
+      id: 'skillAlignment',
+      label: 'Skill Match',
+      value: skillAlignment,
+      weight: WEIGHTS.skillAlignment,
+      hint: 'Required skills found versus required skills requested.',
+      movable: 'conditional',
+      lockedReason: KEYWORD_EVIDENCE_REASON,
+    },
     {
       id: 'titleAlignment',
       label: 'Experience Relevance',

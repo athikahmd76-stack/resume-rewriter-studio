@@ -41,6 +41,17 @@ const TOOL_CUES = [
   'tools', 'technologies', 'tech stack', 'software', 'platforms', 'systems', 'technical skills',
   'environment', 'environment', 'erp', 'applications',
 ];
+// Location, salary and contact boilerplate. These lines describe the advert
+// rather than the job, and scanning them produced keywords like "manchester
+// hybrid" and "analyst - manchester" that no resume can honestly contain.
+const NOISE_CUES = [
+  'location', 'locations', 'based in', 'based near', 'office', 'salary', 'salaries', 'pay',
+  'compensation', 'benefits', 'per annum', 'p.a.', 'pro rata', 'fte', 'contract type',
+  'employment type', 'closing date', 'apply now', 'apply by', 'how to apply', 'contact',
+  'email', 'phone', 'teleephone', 'website', 'equal opportunities', 'diversity',
+];
+// Work-model wording, which usually travels with a city name in the same line.
+const WORK_MODEL_RE = /\b(hybrid|remote|on-?site|in office|days? (?:in|at) (?:the )?(?:office|site)|commutable|relocation)\b/i;
 
 /** Categorise a keyword into a domain bucket. */
 export const categorizeKeyword = (term) => {
@@ -57,12 +68,13 @@ export const categorizeKeyword = (term) => {
 
 const bucketLines = (text) => {
   const lines = splitLines(text);
-  const buckets = { required: [], preferred: [], responsibilities: [], qualifications: [], tools: [], general: [] };
+  const buckets = { required: [], preferred: [], responsibilities: [], qualifications: [], tools: [], general: [], noise: [] };
   let mode = 'general';
   for (const raw of lines) {
     const line = collapseWhitespace(raw);
     if (!line) continue;
     const lower = line.toLowerCase();
+    if (NOISE_CUES.some((c) => lower.includes(c)) || WORK_MODEL_RE.test(line)) { buckets.noise.push(line); continue; }
     if (REQUIRED_CUES.some((c) => lower.includes(c))) { mode = 'required'; buckets.required.push(line); continue; }
     if (PREFERRED_CUES.some((c) => lower.includes(c))) { mode = 'preferred'; buckets.preferred.push(line); continue; }
     if (RESPONSIBILITY_CUES.some((c) => lower.includes(c))) { mode = 'responsibilities'; buckets.responsibilities.push(line); continue; }
@@ -210,7 +222,13 @@ export const analyzeJobDescription = (jobDescription, context = {}) => {
   // --- job title ------------------------------------------------------------
   const titleMatch = text.match(/(?:job title|position|role|title)\s*[:-]\s*(.{2,80})/i)
     || text.match(/^\s*([A-Z][^\n]{4,70})\s*$/m);
-  result.title = titleMatch ? collapseWhitespace(titleMatch[1]).replace(/[.,;]$/, '') : '';
+  // Keep only the role itself. Advert headings routinely trail a location and a
+  // work model ("Supply Chain Analyst - Manchester (Hybrid)"), and every word
+  // in the title is treated as a strong keyword, so leaving the tail in
+  // produced requirements like "manchester hybrid" that no resume can meet.
+  result.title = titleMatch
+    ? collapseWhitespace(String(titleMatch[1]).split(/\s+[-–—|]\s+|\s*[-(]/)[0]).replace(/[.,;]$/, '').trim()
+    : '';
 
   const { buckets, lines } = bucketLines(text);
   result.sections = Object.entries(buckets)
@@ -225,13 +243,29 @@ export const analyzeJobDescription = (jobDescription, context = {}) => {
 
   // --- keyword candidates ---------------------------------------------------
   const scored = new Map();
+  const titleParts = normalizeKeyword(result.title || '').split(' ').filter(Boolean);
+  // Only a compound role title breaks into meaningless fragments: "Supply Chain
+  // Analyst" contributed "supply", "chain" and "analyst" as requirements of their
+  // own, none of which a resume can answer. A two-word title is a plain
+  // job-family pair and both halves are usually meaningful on their own, so
+  // "Data Analyst" still has to offer "data" as a keyword.
+  const titleWords = titleParts.length > 2 ? new Set(titleParts) : new Set();
   const addCandidate = ({ term, count = 1, weight = 1, required = false, preferred = false, fromTool = false }) => {
-    const t = normalizeKeyword(term);
+    const raw = normalizeKeyword(term);
+    if (!raw) return;
+    // Trim the filler off the ends before anything else, so the stored keyword
+    // is the thing a candidate would actually write on their resume.
+    const t = trimPhraseFiller(raw);
     if (!t) return;
     if (t.length < 2 || t.length > 46) return;
     if (NON_KEYWORD_TERMS.has(t)) return;
     if (STOP_WORDS.has(t)) return;
     if (WEAK_ONLY.has(t)) return;
+    if (isNoiseTerm(t)) return;
+    // The role phrase is already a requirement on its own, so the loose words it
+    // is built from ("Supply Chain Analyst" -> "supply", "chain", "analyst") only
+    // pad the gap list with things no resume could answer on their own.
+    if (!t.includes(' ') && titleWords.has(t)) return;
     const entry = scored.get(t) || {
       term: t, count: 0, weight: 0, required: false, preferred: false, tool: false,
       category: categorizeKeyword(t),
@@ -262,10 +296,19 @@ export const analyzeJobDescription = (jobDescription, context = {}) => {
   for (const line of buckets.general) {
     for (const c of candidatesFromLine(line)) addCandidate({ ...c, weight: 1.4 });
   }
-  // JD title words are strong signals
+  // JD title words are strong signals. A readable role phrase counts as one
+  // requirement, because its fragments are not skills: "Supply Chain Analyst"
+  // used to contribute "supply", "analyst" and "chain analyst" separately, none
+  // of which any resume can evidence on its own. A heading that has swallowed
+  // the whole advert is not a phrase, so that case falls back to n-grams.
   if (result.title) {
-    for (const c of extractNgrams(result.title, { maxN: 3, limit: 5 })) {
-      addCandidate({ term: c.term, count: c.count, weight: 3.6 });
+    if (titleParts.length && titleParts.length <= 4) {
+      const t = normalizeKeyword(result.title);
+      if (t && !isNoiseTerm(t)) addCandidate({ term: t, count: 1, weight: 3.6 });
+    } else {
+      for (const c of extractNgrams(result.title, { maxN: 3, limit: 5 })) {
+        addCandidate({ term: c.term, count: c.count, weight: 3.6 });
+      }
     }
   }
   for (const cert of result.certifications) {
@@ -334,9 +377,9 @@ const WEAK_ONLY = new Set(['experience', 'work', 'role', 'team', 'teams', 'job',
 // Words that qualify a keyword without being part of it. Trimmed from the ends
 // of an extracted phrase so the real term underneath becomes matchable.
 const PHRASE_FILLER = new Set([
-  'build', 'building', 'built', 'create', 'creating', 'creating', 'develop', 'developing',
+  'build', 'building', 'built', 'create', 'creating', 'develop', 'developing',
   'design', 'designing', 'maintain', 'maintaining', 'manage', 'managing', 'work', 'working',
-  'works', 'working', 'use', 'using', 'used', 'apply', 'applying', 'strong', 'strongly',
+  'works', 'use', 'using', 'used', 'apply', 'applying', 'strong', 'strongly',
   'excellent', 'extensive', 'deep', 'solid', 'proven', 'demonstrated', 'exposure',
   'familiar', 'familiarity', 'knowledge', 'understanding', 'capability', 'capabilities',
   'experience', 'experienced', 'expert', 'expertise', 'skilled', 'skill', 'skills',
@@ -345,6 +388,24 @@ const PHRASE_FILLER = new Set([
   'across', 'within', 'from', 'with', 'for', 'and', 'the', 'a', 'an', 'of', 'to', 'in',
   'on', 'at', 'hiring', 'hire', 'looking', 'seeking', 'join', 'help', 'helping',
   'supporting', 'support', 'driving', 'drive', 'delivering', 'deliver', 'leading', 'lead',
+  'automate', 'automating', 'utilise', 'utilize', 'utilising', 'utilizing',
+  'run', 'running', 'improve', 'improving', 'improve', 'strengthen', 'strengthening',
+  'partner', 'partners', 'closely', 'repetitive', 'routine', 'regular', 'weekly',
+  'daily', 'monthly', 'annual', 'ongoing', 'various', 'multiple', 'several',
+]);
+
+// Ad verbs and layout words that are never skills. Anything in here is dropped
+// even when the extractor produced it as a standalone term.
+const AD_NOISE = new Set([
+  'desirable', 'hybrid', 'network', 'exposure', 'capability', 'capabilities', 'excellent',
+  'highly', 'competitive', 'package', 'remuneration', 'essential', 'crucial', 'key',
+  'successful', 'successful', 'proven', 'track', 'record', 'background', 'knowledge',
+  'familiarity', 'understanding', 'expertise', 'opportunity', 'opportunities', 'candidate',
+  'candidates', 'applicant', 'applicants', 'benefits', 'salary', 'location', 'office',
+  'remotes', 'remote', 'hybrid', 'onsite', 'fulltime', 'parttime', 'permanent', 'contract',
+  'temporary', 'immediate', 'soon', 'negotiable', 'depending', 'depending', 'plus',
+  'closely', 'partners', 'reporting', 'reporting', 'tasks', 'someone', 'somebody',
+  'team', 'teams',
 ]);
 
 /** Remove filler words from the front and back of a multi-word phrase. */
@@ -353,6 +414,28 @@ const trimPhraseFiller = (term) => {
   while (parts.length > 1 && PHRASE_FILLER.has(parts[0])) parts.shift();
   while (parts.length > 1 && PHRASE_FILLER.has(parts[parts.length - 1])) parts.pop();
   return parts.join(' ');
+};
+
+/**
+ * Reject extracted terms that no resume could honestly contain, or that are not
+ * skills at all. These were being reported to the user as "missing keywords",
+ * which made the gap list look long and unreachable and held the keyword score
+ * down for reasons that had nothing to do with the candidate.
+ */
+const isNoiseTerm = (t) => {
+  // A dangling dash means the n-gram straddled two list items: "analyst - manchester".
+  if (t.includes(' - ') || /-$/.test(t) || /^-/.test(t)) return true;
+  // More than four words is a sentence fragment, not a skill.
+  if (t.split(' ').length > 4) return true;
+  // A phrase carrying a number is a fact from the advert ("40+ stores"). A bare
+  // token starting with a digit is fine: "4hana" is SAP S/4HANA.
+  if (t.includes(' ') && /\d/.test(t)) return true;
+  // A single word that is only filler ("experience", "skills", "automate") is a
+  // qualifier the advert used to dress up a real term, not a requirement.
+  const words = t.split(' ');
+  if (words.length === 1 && PHRASE_FILLER.has(words[0])) return true;
+  if (words.length && words.every((w) => AD_NOISE.has(w))) return true;
+  return false;
 };
 
 export default analyzeJobDescription;

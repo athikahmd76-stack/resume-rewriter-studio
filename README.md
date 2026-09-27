@@ -171,6 +171,28 @@ increases the number of job keywords your resume covers, and that is a property 
 of the one sentence the swap lands in. Every substitution is applied only if the covered-keyword count goes up as a
 result, so the rewrite cannot trade one covered keyword for another and call it an improvement.
 
+**Wording is not a gap.** A posting that asks for "statistical forecasting" and a resume that says "demand planning"
+describe the same competency, so the app credits it. The same applies to "power bi" against "microsoft power bi", or
+"vendor management" against "supplier management". Without this, candidates were being docked for their choice of
+words, and the keyword components were measuring phrasing rather than experience. The dictionary is local and
+deliberately small, so it recognises common equivalents and nothing speculative. It only affects *scoring* - the
+rewriter still refuses to rewrite a phrase unless the substitution map explicitly allows that exact pair, so nothing
+is ever written into your resume on the strength of a synonym guess.
+
+**The gap list only contains real gaps.** Requirements are cleaned before they are shown to you. Filler is trimmed
+off the ends of a phrase, so "build SQL dashboards" is asked for as "sql dashboards" rather than "build". Location,
+salary, benefits, contact details and closing dates are dropped, as is a heading's trailing city and work model -
+"Supply Chain Analyst - Manchester (Hybrid)" is treated as the role *Supply Chain Analyst*. Standalone ad vocabulary
+("highly desirable", "exposure", "partner closely") is dropped too, and so are the loose fragments of a compound
+role title, which used to ask you for "supply" and "analyst" on their own. What is left is the set of things a
+resume could genuinely evidence, which is why the list is now short and every entry on it is actionable.
+
+**A bullet the rewriter cannot parse no longer costs you the whole document.** Metrics are matched with a regular
+expression, and a figure the pattern did not anticipate used to leave it with nothing to compare, which threw part
+way through and surfaced as "The rewrite could not be completed" - you lost the run, not just the sentence. Every
+metric lookup is now guarded, so an awkward bullet is left as it is and the rest of the rewrite finishes. That
+failure is covered by a regression test built from em dashes placed exactly where the old parser broke.
+
 A resume that is already clean and well-matched can legitimately show a delta of zero. The app will tell you that
 was the reason rather than leaving you to guess.
 
@@ -406,6 +428,20 @@ the repository segment.
 The analysis has its own coverage on both levels. `npm run test` asserts the scorers are deterministic, that the
 weights sum to 1, that an empty job description still produces a defined score, that the four SWOT quadrants always
 come back non-empty with evidence, and that no report format can state a number the others disagree with.
+
+It also pins the three failures that are easy to reintroduce, because each of them looked like a scoring problem
+and was actually a plumbing one:
+
+- **Per-resume scoring.** Duplicate-content and missing-keyword penalties are recomputed for the optimized
+  document. The test re-scores the same resume with a genuinely absent keyword added to its text and asserts the
+  number moves, which is what catches the components quietly reading the *original* resume on both sides.
+- **A bullet the rewriter cannot parse.** Ten bullets with a figure in a position the metric regex does not expect
+  (em dashes before numbers, a currency symbol, a bare percentage) must all survive verbatim and the run must
+  complete. This is the guard behind "The rewrite could not be completed".
+- **A differently-worded posting term.** A resume that says "demand planning" must be credited for a posting that
+  asks for "statistical forecasting", the gap list must not contain either location, salary, benefits or contact
+  boilerplate, the role title must be the whole heading, and no fragment of it may be asked for on its own.
+
 `npm run test:browser` then downloads all four report files through the real UI and checks the PDF's *inflated*
 content streams for the score labels, the four quadrant names and the exact before/after percentages, so a report that
 is a valid but empty PDF fails the run.
@@ -433,6 +469,20 @@ Another copy of the app is still running. Close the other black window, or use a
 The PDF has no usable text layer - it is a scan or an image. The app says so and offers OCR once the assets
 above are installed. Text-based PDFs and DOCX files work without them.
 
+**"The rewrite could not be completed"**
+The rewrite failed part way and the app kept your original file rather than saving a half-finished document. This
+used to happen whenever a bullet contained a figure the rewriter could not read - most often an em dash right
+before a number, as in `Cut returns by - 18%`. Those bullets are now left exactly as written and the rest of the
+rewrite completes. If you still see this, the offending line is almost always an unusual one: open the browser
+developer console, run the rewrite again, and the first error will name the rule that stopped it. You can always
+download your original - nothing is lost either way.
+
+**A keyword shows as missing even though your resume says something similar**
+Check whether the two are linked in the local synonym dictionary (see
+[Wording is not a gap](#why-a-delta-can-be-small-and-what-the-app-does-about-it)). The app only credits an
+equivalent it has been given explicitly, because guessing at equivalence is how a resume ends up claiming
+something the candidate has not done. Everything else stays in the missing list on purpose.
+
 **Word cannot open the exported DOCX**
 Close any open copy of the file first, then retry. The export is a clean rebuild, not a clone of the source.
 
@@ -459,6 +509,13 @@ delete `node_modules` and reinstall if it persists.
   things the resume does not say. A high score is not a prediction of an interview.
 - A Job Match % is only as good as the job description. With an empty or vague JD the score falls back to a
   documented default rather than pretending to measure something.
+- The synonym dictionary is small and hand-written, so a posting that words a competency in a way the dictionary
+  does not know will show that keyword as missing. It is deliberately biased towards under-crediting rather than
+  towards guessing at equivalence, because an invented match is a false claim and a missed match is only a
+  conservative score.
+- Job-advert noise filtering is rule-based, so an unusually worded advert can still contribute a requirement that
+  reads oddly. It is tuned to drop locations, salary, benefits, contact details and ad vocabulary; it will not
+  attempt to understand an advert written in a language the app does not parse.
 
 ---
 
