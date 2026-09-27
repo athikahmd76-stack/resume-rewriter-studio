@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ShieldCheck, Sparkles, Play, RotateCcw, Layers, Columns2, Gauge as GaugeIcon, FileText, Download,
-  ChevronRight, WifiOff, Cpu, Keyboard, Info,
+  ChevronRight, WifiOff, Cpu, Keyboard, Info, ClipboardCheck, Target, Compass,
 } from 'lucide-react';
 
 import { Card, Notice, Progress, Empty } from './components/ui.jsx';
@@ -15,17 +15,20 @@ import OriginalPreview from './components/OriginalPreview.jsx';
 import OptimizedPreview from './components/OptimizedPreview.jsx';
 import ComparisonView from './components/ComparisonView.jsx';
 import ATSAnalysis from './components/ATSAnalysis.jsx';
+import JobMatchCard, { Delta } from './components/JobMatchCard.jsx';
+import SwotAnalysis from './components/SwotAnalysis.jsx';
 import ResumeEditor from './components/ResumeEditor.jsx';
 import DownloadPanel from './components/DownloadPanel.jsx';
+import ReportActions from './components/ReportActions.jsx';
 
-import { runPipeline, parseFile, structureDocument, STEPS } from './services/pipeline.js';
+import { runPipeline, parseFile, structureDocument, buildAnalysis, STEPS } from './services/pipeline.js';
 import { compareResumes } from './services/diffEngine.js';
-import { scoreComparison } from './services/atsScorer.js';
 import { buildBlocks, paginate, measureAndReflow } from './services/paginationEngine.js';
 import { buildTheme } from './templates/theme.js';
 import ResumeRenderer from './templates/ResumeRenderer.jsx';
 import { exportDocx } from './services/docxExporter.js';
 import { exportPdf, printElement } from './services/pdfExporter.js';
+import { exportReport, reportFileName } from './services/reportExporter.js';
 import { ocrPdf, ocrAssetsMissingMessage } from './services/ocrService.js';
 import { analyzeJobDescription } from './services/jdAnalyzer.js';
 import { DEFAULT_SETTINGS } from './services/resumeRewriter.js';
@@ -41,6 +44,7 @@ const TABS = [
   { id: 'optimized', label: 'Optimized', icon: Sparkles },
   { id: 'comparison', label: 'Comparison', icon: Columns2 },
   { id: 'ats', label: 'ATS Analysis', icon: GaugeIcon },
+  { id: 'swot', label: 'SWOT', icon: Compass },
 ];
 
 const ZOOMS = [0.5, 0.7, 0.85, 1, 1.2];
@@ -88,6 +92,8 @@ export default function App() {
   const [isEdited, setIsEdited] = useState(false);
   const [versions, setVersions] = useState([]);
   const [exportBusy, setExportBusy] = useState(null);
+  const [reportFormat, setReportFormat] = useState(null);
+  const [lastReportFormat, setLastReportFormat] = useState(null);
 
   const exportRef = useRef(null);
   const previewRef = useRef(null);
@@ -140,6 +146,10 @@ export default function App() {
   const canGenerate = Boolean(structured || isDemo) && !busy;
   const styleName = BUILTIN_STYLES[styleId]?.name || 'Professional Minimal';
   const stepIndex = STEPS.findIndex((s) => s.id === progress.step);
+
+  const report = result?.report || null;
+  const swot = result?.swot || null;
+  const canDownloadReport = Boolean(report);
 
   // ---------------- upload ----------------
   const ingest = useCallback(async (picked, { ocr = false } = {}) => {
@@ -275,6 +285,12 @@ export default function App() {
         userKeywords: keywords,
         targetRole,
         settings,
+        context: {
+          styleId,
+          preserveLayout: settings.preserveLayout,
+          isEdited: false,
+          sourceFileName: file?.name,
+        },
         onProgress: (step, pct, label) => setProgress({ step, pct, label }),
       });
       setResult(out);
@@ -291,12 +307,15 @@ export default function App() {
       ].slice(-12));
       setTab('optimized');
       const delta = out.scores.optimized.overall - out.scores.original.overall;
+      const jmDelta = out.jobMatch.optimized.overall - out.jobMatch.original.overall;
       if (out.guard && !out.guard.passed) {
         toast.warn('Fact guard blocked some content', `${out.guard.blocked.length} unsupported item(s) were removed. Check the Comparison tab.`);
       } else {
         toast.success(
           'Rewrite complete',
-          `Heuristic score ${out.scores.original.overall}% → ${out.scores.optimized.overall}% (${delta >= 0 ? '+' : ''}${delta}) in ${out.durationMs} ms.`,
+          `Job match ${out.jobMatch.original.overall}% → ${out.jobMatch.optimized.overall}% (${jmDelta >= 0 ? '+' : ''}${jmDelta})`
+          + ` · ATS ${out.scores.original.overall}% → ${out.scores.optimized.overall}% (${delta >= 0 ? '+' : ''}${delta})`
+          + ` in ${out.durationMs} ms.`,
         );
       }
     } catch (err) {
@@ -305,24 +324,39 @@ export default function App() {
       setBusy(null);
       setProgress({ step: null, pct: 0, label: '' });
     }
-  }, [jd, keywords, targetRole, settings, toast]);
+  }, [jd, keywords, targetRole, settings, styleId, file?.name, toast]);
 
   // ---------------- editing + versions ----------------
   /**
-   * Apply a human edit to the optimized resume and re-score it, so the ATS tab
-   * and the tab badge always describe what is actually on screen.
+   * Apply a human edit to the optimized resume and re-derive everything that
+   * describes it - ATS scores, the Job Match % pair, the SWOT and the report -
+   * so every surface always shows the numbers for what is actually on screen.
    */
   const applyEdit = useCallback((nextResume) => {
     setIsEdited(true);
     setResult((r) => {
       if (!r) return r;
-      return {
-        ...r,
+      const analysis = buildAnalysis({
+        originalResume: r.originalResume,
         optimizedResume: nextResume,
-        scores: scoreComparison(r.originalResume, nextResume, r.jd, r.match, r.layout),
-      };
+        jd: r.jd,
+        match: r.match,
+        layout: r.layout,
+        guard: r.guard,
+        changeLog: r.changeLog,
+        durationMs: r.durationMs,
+        settings: r.settings,
+        context: {
+          styleId,
+          preserveLayout: settings.preserveLayout,
+          isEdited: true,
+          sourceFileName: file?.name,
+          targetRole,
+        },
+      });
+      return { ...r, optimizedResume: nextResume, ...analysis };
     });
-  }, []);
+  }, [file?.name, settings.preserveLayout, styleId, targetRole]);
 
   const saveVersion = useCallback((resume, kind = 'edited') => {
     setVersions((v) => [
@@ -376,6 +410,26 @@ export default function App() {
     }
   }, [toast]);
 
+  // ---------------- analysis report ----------------
+  const onDownloadReport = useCallback(async (format) => {
+    if (!result?.report) return;
+    setReportFormat(format);
+    const fileName = reportFileName(file?.name, format);
+    try {
+      await exportReport(result.report, format, {
+        fileName,
+        onProgress: (pct, label) => setProgress({ step: 'report', pct, label }),
+      });
+      setLastReportFormat(format);
+      toast.success('Report saved', `${fileName} was written to your downloads folder.`);
+    } catch (err) {
+      toast.error('Report export failed', String(err?.message || 'Unexpected error while building the report.'));
+    } finally {
+      setReportFormat(null);
+      setProgress({ step: null, pct: 0, label: '' });
+    }
+  }, [result, file?.name, toast]);
+
   // ---------------- keep measured pagination honest ----------------
   // The heuristic paginator cannot know real font metrics, so overflowing
   // content is moved to the next page once the browser has laid it out. The
@@ -426,6 +480,13 @@ export default function App() {
             <span className="privacy-pill">
               <ShieldCheck size={13} aria-hidden="true" /> 100% in your browser
             </span>
+            <ReportActions
+              onDownload={onDownloadReport}
+              canDownload={canDownloadReport}
+              busy={reportFormat === 'pdf' ? 'pdf' : null}
+              variant="appbar"
+              compact
+            />
             <a className="btn btn--sm btn--ghost" href="#job-description">Job description</a>
             <a className="btn btn--sm btn--ghost" href="#keywords">Keywords</a>
             <a className="btn btn--sm btn--ghost" href="#preview">Preview</a>
@@ -499,6 +560,50 @@ export default function App() {
                 : 'Upload a resume or load the demo to enable the rewrite.'}
             </p>
           </Card>
+
+          {/* at-a-glance scores, visible from every tab without scrolling to the analysis */}
+          {report ? (
+            <Card
+              title="Your scores"
+              hint="Job match and ATS, before versus after the rewrite."
+              icon={Target}
+            >
+              <div className="mini-scores">
+                {[
+                  { key: 'jobMatch', label: 'Job Match', icon: Target, value: report.scores.jobMatch.after, before: report.scores.jobMatch.before },
+                  { key: 'ats', label: 'ATS Score', icon: GaugeIcon, value: report.scores.ats.after, before: report.scores.ats.before },
+                ].map((s) => (
+                  <div key={s.key} className="mini-score">
+                    <span className="mini-score__icon" aria-hidden="true"><s.icon size={14} /></span>
+                    <div className="grow">
+                      <p className="mini-score__label">{s.label}</p>
+                      <p className="mini-score__value">
+                        {s.before}% <span aria-hidden="true">&rarr;</span>{' '}
+                        <strong style={{ color: s.value >= 70 ? 'var(--ok)' : s.value >= 45 ? 'var(--warn)' : 'var(--danger)' }}>
+                          {s.value}%
+                        </strong>
+                      </p>
+                    </div>
+                    <Delta delta={s.value - s.before} />
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="btn btn--sm btn--block btn--subtle"
+                  onClick={() => setTab('ats')}
+                >
+                  <GaugeIcon size={13} aria-hidden="true" /> See the full breakdown
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--sm btn--block btn--subtle"
+                  onClick={() => setTab('swot')}
+                >
+                  <Compass size={13} aria-hidden="true" /> SWOT analysis
+                </button>
+              </div>
+            </Card>
+          ) : null}
         </div>
 
         {/* ============================ workspace ============================ */}
@@ -550,6 +655,11 @@ export default function App() {
                     <t.icon size={14} aria-hidden="true" /> {t.label}
                     {t.id === 'ats' && result ? (
                       <span className="tab__count">{result.scores.optimized.overall}</span>
+                    ) : null}
+                    {t.id === 'swot' && swot ? (
+                      <span className="tab__count">
+                        {(swot.strengths?.length || 0) + (swot.threats?.length || 0)}
+                      </span>
                     ) : null}
                   </button>
                 ))}
@@ -630,15 +740,53 @@ export default function App() {
 
                     {tab === 'ats' ? (
                       <div id="panel-ats" role="tabpanel">
-                        <ATSAnalysis
-                          scores={result?.scores}
-                          match={result?.match}
-                          guard={result?.guard}
-                          jd={result?.jd}
-                          layout={result?.layout}
-                          diagnostics={result?.diagnostics}
-                          loading={busy === 'pipeline'}
-                        />
+                        <div className="stack">
+                          <JobMatchCard report={report} loading={busy === 'pipeline'} />
+                          <ATSAnalysis
+                            scores={result?.scores}
+                            match={result?.match}
+                            guard={result?.guard}
+                            jd={result?.jd}
+                            layout={result?.layout}
+                            diagnostics={result?.diagnostics}
+                            loading={busy === 'pipeline'}
+                          />
+                          <Card
+                            title="Download the analysis"
+                            hint="These exact scores, the keyword tables and the full SWOT, in one file."
+                            icon={ClipboardCheck}
+                          >
+                            <ReportActions
+                              onDownload={onDownloadReport}
+                              canDownload={canDownloadReport}
+                              busy={reportFormat}
+                              lastFormat={lastReportFormat}
+                              fileHint={lastReportFormat ? reportFileName(file?.name, lastReportFormat) : ''}
+                            />
+                          </Card>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {tab === 'swot' ? (
+                      <div id="panel-swot" role="tabpanel">
+                        <div className="stack">
+                          <JobMatchCard report={report} loading={busy === 'pipeline'} />
+                          <SwotAnalysis swot={swot} loading={busy === 'pipeline'} />
+                          <Card
+                            title="Download the analysis"
+                            hint="Job Match %, ATS before and after, the SWOT and every keyword table in one file."
+                            icon={ClipboardCheck}
+                          >
+                            <ReportActions
+                              onDownload={onDownloadReport}
+                              canDownload={canDownloadReport}
+                              busy={reportFormat}
+                              lastFormat={lastReportFormat}
+                              fileHint={lastReportFormat ? reportFileName(file?.name, lastReportFormat) : ''}
+                            />
+                          </Card>
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -648,14 +796,23 @@ export default function App() {
           </Card>
 
           <Card id="download" title="Download" hint="Built locally, saved straight to your device." icon={Download}>
-            <DownloadPanel
-              onExport={onExport}
-              onPrint={onPrint}
-              canExport={Boolean(liveResume)}
-              busy={exportBusy}
-              pageCount={render.pagination?.pageCount}
-              fileHint={`${baseName(file?.name || 'resume')}-optimized`}
-            />
+            <div className="stack">
+              <DownloadPanel
+                onExport={onExport}
+                onPrint={onPrint}
+                canExport={Boolean(liveResume)}
+                busy={exportBusy}
+                pageCount={render.pagination?.pageCount}
+                fileHint={`${baseName(file?.name || 'resume')}-optimized`}
+              />
+              <ReportActions
+                onDownload={onDownloadReport}
+                canDownload={canDownloadReport}
+                busy={reportFormat}
+                lastFormat={lastReportFormat}
+                fileHint={lastReportFormat ? reportFileName(file?.name, lastReportFormat) : ''}
+              />
+            </div>
           </Card>
 
           <Card title="How this tool behaves" icon={Info}>

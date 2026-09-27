@@ -10,6 +10,7 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { inflateSync } from 'node:zlib';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 
@@ -30,6 +31,30 @@ const extractJpeg = (buf) => {
   if (start < 0) return null;
   const end = buf.lastIndexOf(Buffer.from([0xff, 0xd9]));
   return end > start ? buf.subarray(start, end + 2) : null;
+};
+
+/**
+ * The readable text of a PDF, taken from its content streams.
+ *
+ * jsPDF writes FlateDecode streams, so the text operators are deflated and a
+ * plain substring search over the file finds nothing. Inflating them is what
+ * lets a test assert the report really contains its own numbers, instead of only
+ * asserting the file is a syntactically valid PDF.
+ */
+const pdfText = (buf) => {
+  const raw = buf.toString('latin1');
+  let out = '';
+  const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  let m = re.exec(raw);
+  while (m) {
+    try {
+      out += `${inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1')}\n`;
+    } catch {
+      out += `${m[1]}\n`;
+    }
+    m = re.exec(raw);
+  }
+  return out;
 };
 
 /** Decode an image in the browser and report how much of it is white vs. ink. */
@@ -178,7 +203,144 @@ try {
     check('PDF text is high contrast', coverage.darkest < 120, `darkest pixel ${coverage.darkest}`);
   }
 
-  console.log('\n7. print stylesheet');
+  console.log('\n10. job match, before and after');
+  // Section 5 leaves the editor open, which replaces the tab panels entirely.
+  await page.click('#panel-editor button:has-text("Close editor")');
+  await page.waitForSelector('.preview-shell', { timeout: 15000 });
+  await page.click('button[role="tab"]:has-text("ATS Analysis")');
+  await page.waitForSelector('#job-match', { timeout: 30000 });
+  const jobMatch = await page.evaluate(() => {
+    const card = document.getElementById('job-match');
+    const blocks = [...card.querySelectorAll('.ba-score')];
+    return {
+      blocks: blocks.length,
+      titles: blocks.map((b) => b.querySelector('.ba-score__title')?.textContent || ''),
+      pairs: blocks.map((b) => [...b.querySelectorAll('.ba-compare__num')].map((n) => n.textContent.trim())),
+      deltas: blocks.map((b) => b.querySelector('.delta')?.textContent.trim() || ''),
+      comps: blocks.map((b) => b.querySelectorAll('.ba-comp').length),
+      headline: card.querySelector('.ba-headline')?.textContent || '',
+      labels: [...card.querySelectorAll('.ba-compare__cap')].map((n) => n.textContent.trim()),
+    };
+  });
+  check('job match and ats blocks both render', jobMatch.blocks === 2, jobMatch.titles.join(' | '));
+  check('both blocks show before and after', jobMatch.pairs.every((p) => p.length === 2 && p.every((v) => /^\d+%$/.test(v))),
+    jobMatch.pairs.map((p) => p.join(' -> ')).join('  |  '));
+  check('the two columns are labelled before and after',
+    jobMatch.labels.some((l) => /before/i.test(l)) && jobMatch.labels.some((l) => /after/i.test(l)),
+    jobMatch.labels.join(' / '));
+  check('both blocks show a delta', jobMatch.deltas.every((d) => d.length > 0), jobMatch.deltas.join('  |  '));
+  check('components are broken out', jobMatch.comps.every((c) => c > 0), jobMatch.comps.join(' / '));
+  check('job match headline renders', jobMatch.headline.length > 10, jobMatch.headline.slice(0, 90));
+
+  console.log('\n11. swot tab');
+  await page.click('button[role="tab"]:has-text("SWOT")');
+  await page.waitForSelector('#swot', { timeout: 30000 });
+  const swot = await page.evaluate(() => {
+    const card = document.getElementById('swot');
+    const quads = [...card.querySelectorAll('.swot-quad')];
+    return {
+      quads: quads.length,
+      labels: quads.map((q) => q.querySelector('.swot-quad__label')?.textContent.trim() || ''),
+      counts: quads.map((q) => q.querySelectorAll('.swot-item-wrap').length),
+      items: card.querySelectorAll('.swot-item__title').length,
+      details: card.querySelectorAll('.swot-item__detail').length,
+      headline: card.querySelector('.swot-headline')?.textContent || '',
+      disclaimer: card.querySelector('.notice')?.textContent || '',
+    };
+  });
+  check('four quadrants render', swot.quads === 4, swot.labels.join(' | '));
+  check('quadrants are named', ['Strengths', 'Weaknesses', 'Opportunities', 'Threats'].every((n) => swot.labels.some((l) => l.startsWith(n))),
+    swot.labels.join(' | '));
+  check('every quadrant has findings', swot.counts.every((c) => c > 0), swot.counts.join(' / '));
+  check('each finding states its evidence', swot.items > 0 && swot.details > 0, `${swot.items} findings, ${swot.details} with detail`);
+  check('swot headline renders', swot.headline.includes('%'), swot.headline.slice(0, 90));
+  check('swot states it is a local estimate', /deterministic local rules/i.test(swot.disclaimer));
+
+  console.log('\n12. downloadable analysis report');
+  const menuBtn = page.locator('.report-dl button:has-text("Analysis report")').first();
+  check('report control is in the app bar', await menuBtn.count() > 0);
+  // The in-panel surfaces render the formats as a grid rather than the app-bar
+  // toggle, so count the format buttons inside each of them instead.
+  const formatsIn = (scope) => page.$$eval(`${scope} .report-dl__grid .dl-card--btn`, (ns) => ns.length);
+  check('all four formats are on the download card', await formatsIn('#download') === 4, await formatsIn('#download'));
+  await page.click('button[role="tab"]:has-text("ATS Analysis")');
+  await page.waitForSelector('#panel-ats', { timeout: 15000 });
+  check('all four formats are on the ats tab', await formatsIn('#panel-ats') === 4, await formatsIn('#panel-ats'));
+  await page.click('button[role="tab"]:has-text("SWOT")');
+  await page.waitForSelector('#panel-swot', { timeout: 15000 });
+  check('all four formats are on the swot tab', await formatsIn('#panel-swot') === 4, await formatsIn('#panel-swot'));
+  await menuBtn.click();
+  await page.waitForSelector('.report-dl__menu', { timeout: 15000 });
+  const formats = await page.$$eval('.report-dl__item .report-dl__label', (ns) => ns.map((n) => n.textContent.trim()));
+  check('all four report formats are offered', formats.length === 4, formats.join(', '));
+
+  // The menu is a toggle, and a download does not close it, so make opening it
+  // idempotent instead of tracking which state it was left in.
+  const openMenu = async () => {
+    if (!(await page.locator('.report-dl__menu').count())) {
+      await menuBtn.click();
+      await page.waitForSelector('.report-dl__menu', { timeout: 15000 });
+    }
+  };
+  const grab = async (label, timeout = 90000) => {
+    await openMenu();
+    const dl = page.waitForEvent('download', { timeout });
+    await page.click(`.report-dl__item:has-text("${label}")`);
+    const file = await dl;
+    const path = join(DOWNLOADS, file.suggestedFilename());
+    await file.saveAs(path);
+    return { file, path, bytes: readFileSync(path) };
+  };
+
+  const jsonFile = await grab('Report JSON', 60000);
+  const reportJson = JSON.parse(jsonFile.bytes.toString('utf8'));
+  check('report JSON downloads', existsSync(jsonFile.path), jsonFile.file.suggestedFilename());
+  check('report JSON carries both score pairs',
+    Number.isFinite(reportJson.scores.jobMatch.before) && Number.isFinite(reportJson.scores.jobMatch.after)
+    && Number.isFinite(reportJson.scores.ats.before) && Number.isFinite(reportJson.scores.ats.after),
+    `match ${reportJson.scores.jobMatch.before}%->${reportJson.scores.jobMatch.after}%, ats ${reportJson.scores.ats.before}%->${reportJson.scores.ats.after}%`);
+  check('report JSON before equals the ATS tab badge',
+    String(reportJson.scores.ats.after) === (await page.textContent('button[role="tab"]:has-text("ATS Analysis") .tab__count'))?.trim(),
+    'badge matches the report');
+  check('report JSON embeds all four swot quadrants',
+    ['strengths', 'weaknesses', 'opportunities', 'threats'].every((q) => Array.isArray(reportJson.swot[q])),
+    ['strengths', 'weaknesses', 'opportunities', 'threats'].map((q) => `${q} ${reportJson.swot[q].length}`).join(', '));
+  check('report JSON names the candidate', reportJson.candidate.name.length > 0, reportJson.candidate.name);
+
+  const rptPdfFile = await grab('Report PDF', 180000);
+  const rptBytes = rptPdfFile.bytes;
+  check('report PDF downloads', rptBytes.subarray(0, 4).toString() === '%PDF', `${(rptBytes.length / 1024).toFixed(1)} kB`);
+  // jsPDF deflates its content streams, so the file the user saved has to be
+  // inflated before its text can be asserted. A report whose scores or SWOT never
+  // made it into the file would still be a perfectly valid PDF, so assert the
+  // content, not just the header.
+  const rptRaw = pdfText(rptBytes);
+  check('report PDF has pages', rptBytes.toString('latin1').includes('/Type /Page'),
+    `${(rptBytes.toString('latin1').match(/\/Type \/Page[^s]/g) || []).length} page(s)`);
+  check('report PDF carries readable text', rptRaw.length > 2000, `${(rptRaw.length / 1024).toFixed(1)} kB inflated`);
+  check('report PDF states both score labels', rptRaw.includes('JOB MATCH') && rptRaw.includes('ATS SCORE'));
+  check('report PDF states the swot quadrants', rptRaw.includes('STRENGTHS') && rptRaw.includes('WEAKNESSES')
+    && rptRaw.includes('OPPORTUNITIES') && rptRaw.includes('THREATS'));
+  check('report PDF shows the before and after percentages', rptRaw.includes(`${reportJson.scores.jobMatch.before}%`)
+    && rptRaw.includes(`${reportJson.scores.jobMatch.after}%`)
+    && rptRaw.includes(`${reportJson.scores.ats.before}%`) && rptRaw.includes(`${reportJson.scores.ats.after}%`),
+    `match ${reportJson.scores.jobMatch.before}->${reportJson.scores.jobMatch.after}, ats ${reportJson.scores.ats.before}->${reportJson.scores.ats.after}`);
+  check('report PDF names the candidate', rptRaw.includes(reportJson.candidate.name.split(' ')[0]), reportJson.candidate.name);
+  check('report PDF is text-based, not a raster', !extractJpeg(rptBytes), 'selectable text, no page image');
+
+  const mdFile = await grab('Report Markdown', 60000);
+  const mdText = mdFile.bytes.toString('utf8');
+  check('report markdown downloads with the score tables',
+    mdText.includes('Job Match') && mdText.includes('ATS Score') && mdText.includes('SWOT analysis'),
+    `${(mdText.length / 1024).toFixed(1)} kB`);
+
+  const htmlFile = await grab('Report HTML', 60000);
+  const htmlText = htmlFile.bytes.toString('utf8');
+  check('report html downloads self-contained',
+    htmlText.startsWith('<!doctype html>') && !/(src|href)\s*=\s*["']https?:/i.test(htmlText),
+    `${(htmlText.length / 1024).toFixed(1)} kB, no remote resources`);
+
+  console.log('\n13. print stylesheet');
   const printState = await page.evaluate(async () => {
     const root_ = document.getElementById('rsp-export-root');
     const stage = root_?.parentElement;

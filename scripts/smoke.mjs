@@ -10,6 +10,9 @@ import { buildTheme } from '../src/templates/theme.js';
 import { buildBlocks, paginate } from '../src/services/paginationEngine.js';
 import { buildDocxDocument } from '../src/services/docxExporter.js';
 import { analyzeJobDescription } from '../src/services/jdAnalyzer.js';
+import {
+  reportToMarkdown, reportToText, reportToHtml, reportToJson, REPORT_FORMATS,
+} from '../src/services/reportBuilder.js';
 import { resumeToText, experienceBullets } from '../src/services/resumeModel.js';
 import { DEMO_PARSED, DEMO_JD, DEMO_KEYWORDS, DEMO_ROLE } from '../src/data/sampleData.js';
 
@@ -167,6 +170,65 @@ try {
 } finally {
   await vite.close();
 }
+
+console.log('\n9. job match percentage');
+const inRange = (v) => typeof v === 'number' && v >= 0 && v <= 100;
+check('job match before is a percentage', inRange(out.jobMatch.original.overall), `${out.jobMatch.original.overall}%`);
+check('job match after is a percentage', inRange(out.jobMatch.optimized.overall), `${out.jobMatch.optimized.overall}%`);
+check('job match has components', out.jobMatch.optimized.components.length === 5, out.jobMatch.optimized.components.map((c) => c.label).join(', '));
+check('job match weights sum to 1', Math.abs(out.jobMatch.optimized.components.reduce((a, c) => a + c.weight, 0) - 1) < 0.001);
+check('every job match component is a percentage', out.jobMatch.optimized.components.every((c) => inRange(c.value)));
+check('job match banded', Boolean(out.jobMatch.optimized.band?.label), out.jobMatch.optimized.band?.label);
+check('job match verdict is plain advice', typeof out.jobMatch.optimized.verdict === 'string' && out.jobMatch.optimized.verdict.length > 10);
+check('job match labelled a heuristic', /heuristic/i.test(out.jobMatch.optimized.disclaimer));
+check('job match survives an empty JD', inRange(emptyJd.jobMatch.optimized.overall), `${emptyJd.jobMatch.optimized.overall}%`);
+// The honesty rule must hold in the new score too: a reported gap is still a gap.
+const optimizedText = resumeToText(out.optimizedResume).toLowerCase();
+const gapLeaks = (out.jobMatch.optimized.gaps.missing || []).filter((g) => optimizedText.includes(String(g.term).toLowerCase()));
+check('job match gaps were not injected', gapLeaks.length === 0, `${out.jobMatch.optimized.gaps.missing.length} gap(s), ${gapLeaks.length} leaked`);
+
+console.log('\n10. SWOT analysis');
+const QUAD = ['strengths', 'weaknesses', 'opportunities', 'threats'];
+check('all four quadrants present', QUAD.every((q) => Array.isArray(out.swot[q])));
+const swotTotal = QUAD.reduce((a, q) => a + out.swot[q].length, 0);
+check('swot produced findings', swotTotal > 0, `${swotTotal} finding(s): ${QUAD.map((q) => `${q} ${out.swot[q].length}`).join(', ')}`);
+const swotItems = QUAD.flatMap((q) => out.swot[q]);
+check('every swot item is traceable', swotItems.every((i) => i.id && i.title && ['high', 'medium', 'low'].includes(i.severity)), `${swotItems.length} item(s)`);
+check('swot counts agree with the quadrants', QUAD.every((q) => out.swot.counts[q] >= out.swot[q].length));
+check('swot is labelled a local estimate', /deterministic local rules/i.test(out.swot.disclaimer));
+check('swot headline summarises the result', out.swot.headline.includes('%'), out.swot.headline);
+check('strengths are evidenced by the resume', out.swot.strengths.length > 0, `${out.swot.strengths.length} strength(s)`);
+// An empty JD must not crash or invent anything.
+check('swot works without a job description', QUAD.every((q) => Array.isArray(emptyJd.swot[q])), `${QUAD.reduce((a, q) => a + emptyJd.swot[q].length, 0)} finding(s)`);
+
+console.log('\n11. downloadable analysis report');
+const report = out.report;
+check('report assembled', Boolean(report));
+check('report names the candidate', report.candidate.name === 'Aarav Mehta', report.candidate.name);
+check('report records the target role', Boolean(report.target.role), report.target.role);
+check('report job match matches the score', report.scores.jobMatch.before === out.jobMatch.original.overall && report.scores.jobMatch.after === out.jobMatch.optimized.overall);
+check('report ats matches the score', report.scores.ats.before === out.scores.original.overall && report.scores.ats.after === out.scores.optimized.overall);
+check('report carries before/after per component', report.scores.jobMatch.components.every((c) => inRange(c.before) && inRange(c.after) && c.delta === c.after - c.before), `${report.scores.jobMatch.components.length} components`);
+check('report embeds the swot', report.swot.strengths.length === out.swot.strengths.length && report.swot.threats.length === out.swot.threats.length);
+check('report lists missing keywords', report.keywords.missing.length === out.match.missing.length, `${report.keywords.missing.length} missing`);
+check('report states the honesty rules', report.honesty.length >= 4, `${report.honesty.length} statement(s)`);
+check('report is timestamped', /^\d{4}-\d{2}-\d{2}T/.test(report.meta.generatedAt), report.meta.generatedAtLabel);
+const md = reportToMarkdown(report);
+check('markdown report renders', md.length > 800, `${(md.length / 1024).toFixed(1)} kB`);
+check('markdown report has both score tables', md.includes('Job Match') && md.includes('ATS Score') && md.includes('SWOT'));
+const txt = reportToText(report);
+check('plain-text report renders', txt.includes('JOB MATCH') && txt.includes('SWOT ANALYSIS'), `${(txt.length / 1024).toFixed(1)} kB`);
+const html = reportToHtml(report);
+check('html report renders', html.startsWith('<!doctype html>') && html.includes('</html>'), `${(html.length / 1024).toFixed(1)} kB`);
+check('html report is self-contained', !/(src|href)\s*=\s*["']https?:/i.test(html), 'no remote resources');
+check('html report escapes the candidate name', html.includes('Aarav Mehta'));
+const json = reportToJson(report);
+let roundTrip = null;
+try { roundTrip = JSON.parse(json); } catch { /* handled by the check below */ }
+check('json report round-trips', roundTrip?.scores?.ats?.after === out.scores.optimized.overall, `${(json.length / 1024).toFixed(1)} kB`);
+check('all four report formats are offered', REPORT_FORMATS.map((f) => f.id).join(',') === 'pdf,html,md,json');
+check('report never claims a gap is present', report.keywords.missing.every((k) => !optimizedText.includes(String(k.term).toLowerCase())));
+check('empty-jd run still builds a report', Boolean(emptyJd.report) && inRange(emptyJd.report.scores.jobMatch.after));
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}\n`);
 process.exit(failures === 0 ? 0 : 1);

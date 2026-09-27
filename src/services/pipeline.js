@@ -3,6 +3,7 @@
  *
  *   parse -> layout -> structure -> JD analysis -> keyword match
  *         -> rewrite -> fact guard -> paginate -> score
+ *         -> job match -> SWOT -> report
  */
 
 import { analyzeLayout } from './layoutAnalyzer.js';
@@ -11,6 +12,9 @@ import { analyzeJobDescription } from './jdAnalyzer.js';
 import { matchKeywords } from './keywordMatcher.js';
 import { rewriteResume, DEFAULT_SETTINGS } from './resumeRewriter.js';
 import { scoreComparison } from './atsScorer.js';
+import { jobMatchComparison } from './jobMatchScorer.js';
+import { buildSwot } from './swotAnalyzer.js';
+import { buildReport } from './reportBuilder.js';
 import { buildBlocks, paginate } from './paginationEngine.js';
 import { buildTheme } from '../templates/theme.js';
 import { isPdf, isDocx, validateResumeFile } from '../utils/validation.js';
@@ -83,6 +87,7 @@ export const runPipeline = async ({
   userKeywords = [],
   targetRole = '',
   settings = {},
+  context = {},
   onProgress = () => {},
 }) => {
   const merged = { ...DEFAULT_SETTINGS, ...settings };
@@ -146,9 +151,10 @@ export const runPipeline = async ({
   const optimizedResume = rewrite.resume;
 
   // ---- scoring ------------------------------------------------------------
+  // The ATS scores, the Job Match pair, the SWOT and the report are all derived
+  // together by buildAnalysis() below, so the editor can reproduce them exactly.
   onProgress('rendering', 92, 'Scoring and paginating');
   await yieldToUi();
-  const scores = scoreComparison(originalResume, optimizedResume, jd, match, layout);
 
   // ---- pagination ---------------------------------------------------------
   const buildPages = (resume, styleId) => {
@@ -163,6 +169,19 @@ export const runPipeline = async ({
 
   onProgress('ready', 100, 'Ready');
 
+  const analysis = buildAnalysis({
+    originalResume,
+    optimizedResume,
+    jd,
+    match,
+    layout,
+    guard: rewrite.guard,
+    changeLog: rewrite.changeLog,
+    durationMs: Math.round(performance.now() - startedAt),
+    settings: merged,
+    context: { sourceFileName: fileInfo?.name || 'resume', targetRole, ...context },
+  });
+
   return {
     parsed,
     layout,
@@ -176,7 +195,7 @@ export const runPipeline = async ({
     changeLog: rewrite.changeLog,
     guard: rewrite.guard,
     settings: merged,
-    scores,
+    ...analysis,
     theme: optimizedPages.theme,
     pagination: optimizedPages.pagination,
     blocks: optimizedPages.blocks,
@@ -186,6 +205,58 @@ export const runPipeline = async ({
     fileInfo,
     durationMs: Math.round(performance.now() - startedAt),
   };
+};
+
+/**
+ * Everything that is derived *after* the rewrite: both ATS scores, the Job Match
+ * % pair, the SWOT and the assembled report.
+ *
+ * Kept separate from the pipeline so the editor can recompute all of it on every
+ * keystroke-batch without re-parsing the document or re-running the rewrite.
+ */
+export const buildAnalysis = ({
+  originalResume,
+  optimizedResume,
+  jd,
+  match,
+  layout = null,
+  guard = null,
+  changeLog = [],
+  durationMs = 0,
+  settings = {},
+  context = {},
+} = {}) => {
+  const scores = scoreComparison(originalResume, optimizedResume, jd, match, layout);
+  const jobMatch = jobMatchComparison(originalResume, optimizedResume, jd, match, layout);
+  const swot = buildSwot({
+    resume: optimizedResume,
+    originalResume,
+    jd,
+    match,
+    scores,
+    jobMatch,
+    guard,
+    layout,
+    changeLog,
+  });
+  const report = buildReport({
+    result: {
+      originalResume,
+      optimizedResume,
+      jd,
+      match,
+      scores,
+      guard,
+      changeLog,
+      layout,
+      durationMs,
+      settings,
+    },
+    jobMatch,
+    swot,
+    context,
+  });
+  return { scores, jobMatch, swot, report };
 };
 
 export default runPipeline;

@@ -26,17 +26,18 @@ rebuilds and redeploys automatically.
 
 1. [Installation (step by step)](#installation-step-by-step)
 2. [Using the app](#using-the-app)
-3. [Commands](#commands)
-4. [Privacy and honesty guarantees](#privacy-and-honesty-guarantees)
-5. [What the app does](#what-the-app-does)
-6. [Editing](#editing)
-7. [Scanned PDFs (OCR) - optional](#scanned-pdfs-ocr---optional)
-8. [Publishing the built app](#publishing-the-built-app)
-9. [Project layout](#project-layout)
-10. [Tests](#tests)
-11. [Troubleshooting](#troubleshooting)
-12. [Known limits](#known-limits)
-13. [License](#license)
+3. [Job Match, ATS before/after, SWOT and the report](#job-match-ats-beforeafter-swot-and-the-report)
+4. [Commands](#commands)
+5. [Privacy and honesty guarantees](#privacy-and-honesty-guarantees)
+6. [What the app does](#what-the-app-does)
+7. [Editing](#editing)
+8. [Scanned PDFs (OCR) - optional](#scanned-pdfs-ocr---optional)
+9. [Publishing the built app](#publishing-the-built-app)
+10. [Project layout](#project-layout)
+11. [Tests](#tests)
+12. [Troubleshooting](#troubleshooting)
+13. [Known limits](#known-limits)
+14. [License](#license)
 
 ---
 
@@ -116,12 +117,46 @@ Then double-click the launcher again (or `npm start`).
    unless you change the style or turn off *Preserve source layout*.
 4. **Press Rewrite Resume** - this parses, analyses, rewrites, checks for invented facts and scores both
    resumes.
-5. **Review the tabs** - Comparison, ATS analysis, edit, and the optimised preview.
-6. **Edit anything** in the editor if you want to; your edits are what gets exported.
-7. **Download** the visual PDF, a clean ATS-friendly DOCX, or print straight from the preview.
+5. **Review the tabs** - Comparison, ATS analysis, SWOT, edit, and the optimised preview.
+6. **Edit anything** in the editor if you want to; your edits are what gets exported. The Job Match %, ATS score
+   and SWOT all recompute as you type, so the before/after numbers always describe the resume you are about to export.
+7. **Download the resume** as the visual PDF, a clean ATS-friendly DOCX, or print straight from the preview.
+8. **Download the analysis** as a PDF, HTML, Markdown or JSON report, from the app bar, the ATS tab, the SWOT tab or
+   the Download card. It contains both score pairs, the keyword tables, the full SWOT and the fact-guard results.
 
 Anything the job description asks for that your resume does not prove is shown as
 `MISSING - NOT FOUND IN SOURCE RESUME`. It is never quietly added to your resume.
+
+---
+
+## Job Match, ATS before/after, SWOT and the report
+
+The analysis is a **deterministic local estimate**: fixed rules over your own text, with no model call and no
+network request. The same resume and job description always produce the same numbers, and every one of them is
+traceable to a term in the source.
+
+**Job Match %** is a weighted breakdown across five components - demonstrated skills, seniority and scope,
+role-relevant responsibility, impact and metrics, and keyword coverage - each shown with its own contribution so
+the headline number can be checked rather than trusted.
+
+**Before and after** is the point of the feature. Every score is shown as a pair:
+
+| Score | Before | After |
+| --- | --- | --- |
+| Job Match | your source resume | the rewritten resume |
+| ATS | your source resume | the rewritten resume |
+
+"Before" is always scored from the file you supplied and "after" from the text you are about to export, including
+any edits you make. The delta is shown in points, and a negative delta is displayed as a regression rather than
+quietly dropped.
+
+**SWOT** is derived from the same two passes, so it cannot contradict the scores: strengths are terms the rewrite
+actually demonstrated, weaknesses are proven gaps, opportunities are job-description terms you already satisfy,
+and threats are requirements with no evidence in the source. Every finding names the evidence behind it, and the
+tab states plainly that it is a local estimate rather than an employer's ATS verdict.
+
+**The report** is assembled by one serialiser, so all four formats carry identical numbers - the PDF, HTML,
+Markdown and JSON files cannot disagree with each other or with the screen.
 
 ---
 
@@ -175,7 +210,11 @@ These are enforced by the code and covered by the test suites.
 4. **Rewrite** - `resumeRewriter` tightens bullets, leads with action verbs, fixes grammar and keyword alignment
    using only vocabulary already present in the source. A change log records every edit.
 5. **Score** - `atsScorer` scores both resumes for keywords, structure and formatting so you can see the delta.
-6. **Preview and export** - the same `ResumeRenderer` output is used for the on-screen A4 page, the visual PDF
+   `jobMatchScorer` adds a weighted Job Match % over five components, and `swotAnalyzer` derives a four-quadrant
+   SWOT from the same two passes so the narrative cannot contradict the numbers.
+6. **Report** - `reportBuilder` assembles one analysis model and serialises it to PDF, HTML, Markdown and JSON,
+   so every format states the same scores. `reportExporter` writes them straight to your device.
+7. **Preview and export** - the same `ResumeRenderer` output is used for the on-screen A4 page, the visual PDF
    (html2canvas + jsPDF), printing, and the DOCX exporter.
 
 The detected page size, margins, font sizes, section order and column layout are preserved unless you change the
@@ -185,9 +224,9 @@ style or turn off *Preserve source layout*.
 
 ## Editing
 
-The editor writes only what you type. The engine never fills a field for you. Edits update the preview, the exports
-and the ATS score immediately, and every applied change is stored in the in-memory version history so you can
-restore an earlier state or revert the rewrite entirely.
+The editor writes only what you type. The engine never fills a field for you. Edits update the preview, the exports,
+the Job Match % and the ATS score immediately, and every applied change is stored in the in-memory version history
+so you can restore an earlier state or revert the rewrite entirely.
 
 ---
 
@@ -278,11 +317,15 @@ src/
     keywordMatcher.js        matched / missing / synonym / unsupported
     resumeRewriter.js        deterministic rewrite + fact guard
     atsScorer.js             heuristic ATS scoring
+    jobMatchScorer.js        weighted Job Match % over five components
+    swotAnalyzer.js          evidence-backed four-quadrant SWOT
+    reportBuilder.js         one analysis model -> PDF/HTML/Markdown/JSON serialisers
+    reportExporter.js        local report file downloads
     paginationEngine.js      A4 page fitting and page breaks
     pdfExporter.js           visual PDF, print CSS, off-screen export stage
     docxExporter.js          styled DOCX generation
     ocrService.js            optional local OCR
-    pipeline.js              parse -> analyse -> match -> rewrite -> guard -> paginate -> score
+    pipeline.js              parse -> analyse -> match -> rewrite -> guard -> score -> report
   templates/                 ResumeRenderer and the three themes
   utils/                     text, keyword, formatting and validation helpers
   data/                      stop words, synonyms, action verbs, section dictionary, demo data
@@ -322,6 +365,13 @@ real ink on it, so a blank or grey "successful" export fails the run. Override t
 ```bash
 CHROME_PATH="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" npm run test:browser
 ```
+
+The analysis has its own coverage on both levels. `npm run test` asserts the scorers are deterministic, that the
+weights sum to 1, that an empty job description still produces a defined score, that the four SWOT quadrants always
+come back non-empty with evidence, and that no report format can state a number the others disagree with.
+`npm run test:browser` then downloads all four report files through the real UI and checks the PDF's *inflated*
+content streams for the score labels, the four quadrant names and the exact before/after percentages, so a report that
+is a valid but empty PDF fails the run.
 
 ---
 
@@ -367,6 +417,11 @@ delete `node_modules` and reinstall if it persists.
 - OCR quality depends entirely on the scan resolution. Very low-DPI scans are reported rather than silently
   producing a bad resume.
 - The DOCX export is a clean, ATS-friendly rebuild of the same content, not a pixel clone of the source.
+- The Job Match %, the ATS score and the SWOT are **local heuristics over keyword and structure evidence**, not an
+  employer's ATS. They are deterministic and explainable, which is what makes them useful, but they cannot know
+  things the resume does not say. A high score is not a prediction of an interview.
+- A Job Match % is only as good as the job description. With an empty or vague JD the score falls back to a
+  documented default rather than pretending to measure something.
 
 ---
 
