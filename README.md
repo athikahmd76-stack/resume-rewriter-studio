@@ -6,6 +6,20 @@ Everything - PDF/DOCX parsing, layout detection, keyword analysis, rewriting, AT
 export - runs in your browser. There is no backend, no API key, no account, no analytics and no upload.
 Your resume never leaves the device.
 
+### Live site - no install needed
+
+**https://athikahmd76-stack.github.io/resume-rewriter-studio/**
+
+Open that link on any device with a modern browser. It is the same app, hosted as a static site on GitHub
+Pages. There is no server, no database and no sign-in, and it is free. Your resume is parsed and rewritten
+entirely inside the browser, so nothing is stored anywhere.
+
+To deploy your own copy, see [Publishing the built app](#publishing-the-built-app) - every push to `main`
+rebuilds and redeploys automatically.
+
+> On the hosted site, text-based PDFs and DOCX files work out of the box. Scanned PDFs need the optional OCR
+> assets, which are not deployed - run it locally if you need OCR.
+
 ---
 
 ## Contents
@@ -218,23 +232,35 @@ missing it reports exactly what to add. Add other languages the same way and reg
 
 ## Publishing the built app
 
-`npm run build` writes a fully static `dist/` folder. It uses a relative base path, so it works from any static
-host (GitHub Pages sub-paths, Netlify, Vercel, Cloudflare Pages, a plain file server) and can be opened without a
-server at all.
+The app is a fully static site, so it can be hosted anywhere for free. It uses a relative base path, so the
+same build works from a sub-path host (GitHub Pages, Netlify, Vercel, Cloudflare Pages, a plain file server).
+
+### GitHub Pages (already set up for this repo)
+
+`.github/workflows/pages.yml` runs on every push to `main`: it installs dependencies, lints, builds `dist/`,
+fails the deploy if the build came out empty, and publishes the result. The workflow also has
+`workflow_dispatch`, so you can redeploy without a commit from the **Actions** tab.
+
+**https://athikahmd76-stack.github.io/resume-rewriter-studio/**
+
+To point Pages at a different branch or turn the deploy off, edit **Settings -> Pages**.
+
+### Build it yourself
 
 ```bash
 npm run build          # -> dist/
 npm run preview        # serve dist/ locally at http://localhost:4173
 ```
 
-To try the production build through the launcher, run `npm run build` first and then double-click the `.bat`
-with `--preview`, or run `node scripts/launch.mjs --preview`.
+To try the production build through the launcher, run `npm run build` first and then run
+`node scripts/launch.mjs --preview`.
 
 ---
 
 ## Project layout
 
 ```
+.github/workflows/pages.yml   build + deploy dist/ to GitHub Pages on every push to main
 ats_resume_analyzer.html     bonus single-file ATS + job-match checker; no install, but it
                              loads pdf.js, mammoth and jszip from cdnjs, so it needs internet
 index.html                   Vite entry page
