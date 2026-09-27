@@ -224,7 +224,6 @@ export const matchKeywords = (resume, jd, userKeywords = []) => {
 
   // Repeated-keyword audit on the source resume itself
   const resumeAudit = auditResumeRepetition(resume);
-
   const summary = {
     targetsConsidered: targetPool.length,
     matched: matched.length,
@@ -249,8 +248,8 @@ export const matchKeywords = (resume, jd, userKeywords = []) => {
   };
 };
 
-/** Detect over-used phrases in the source resume (keyword stuffing risk). */
-const auditResumeRepetition = (resume) => {
+/** Detect over-used phrases in a resume (keyword stuffing risk). */
+export const auditResumeRepetition = (resume) => {
   const flags = [];
   const sections = [];
   const pushSection = (id, text) => {

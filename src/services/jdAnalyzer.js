@@ -278,6 +278,21 @@ export const analyzeJobDescription = (jobDescription, context = {}) => {
     addCandidate({ term: userKw, count: 1, weight: 5, required: true });
   }
 
+  // --- strip filler glued onto the front and back of a phrase ---------------
+  // The n-gram pass legitimately produces things like "build sql dashboards",
+  // "excellent stakeholder management" and "capability pivot tables". Those
+  // phrases never match a real resume because the candidate never writes the
+  // filler, so a genuine keyword like "sql" gets reported as missing even when
+  // the resume says it. Registering the trimmed core as well keeps the phrase
+  // available for context while making the real keyword matchable.
+  for (const k of [...scored.values()]) {
+    if (!k.term.includes(' ')) continue;
+    const core = trimPhraseFiller(k.term);
+    if (core !== k.term && core.length >= 2) {
+      addCandidate({ term: core, count: 1, weight: k.weight * 0.9, required: k.required, preferred: k.preferred, fromTool: k.tool });
+    }
+  }
+
   // --- priority assignment (deterministic) ---------------------------------
   const keywords = [...scored.values()].map((k) => {
     const dictBonus = getSynonyms(k.term).length ? 1.5 : 0;
@@ -314,6 +329,30 @@ export const analyzeJobDescription = (jobDescription, context = {}) => {
   return result;
 };
 
-const WEAK_ONLY = new Set(['experience', 'work', 'role', 'team', 'teams', 'job', 'candidate', 'ability', 'knowledge', 'skills', 'skill', 'company', 'business', 'environment', 'level', 'years', 'year', 'strong', 'good', 'great', 'excellent', 'plus', 'must', 'will', 'have', 'including', 'etc', 'new', 'well', 'time', 'day', 'people', 'other', 'good', 'best', 'first', 'like', 'across', 'within', 'using', 'use']);
+const WEAK_ONLY = new Set(['experience', 'work', 'role', 'team', 'teams', 'job', 'candidate', 'ability', 'knowledge', 'skills', 'skill', 'company', 'business', 'environment', 'level', 'years', 'year', 'strong', 'good', 'great', 'excellent', 'plus', 'must', 'will', 'have', 'including', 'etc', 'new', 'well', 'time', 'day', 'people', 'other', 'good', 'best', 'first', 'like', 'across', 'within', 'using', 'use', 'hiring', 'hire', 'building', 'build', 'creating', 'create', 'working', 'work', 'helping', 'help', 'knowledge', 'familiarity', 'familiar', 'exposure', 'excellent', 'highly', 'desirable', 'capability', 'capabilities', 'demonstrated', 'proven', 'solid', 'proven', 'preferred', 'ideally', 'ideally', ' ideally']);
+
+// Words that qualify a keyword without being part of it. Trimmed from the ends
+// of an extracted phrase so the real term underneath becomes matchable.
+const PHRASE_FILLER = new Set([
+  'build', 'building', 'built', 'create', 'creating', 'creating', 'develop', 'developing',
+  'design', 'designing', 'maintain', 'maintaining', 'manage', 'managing', 'work', 'working',
+  'works', 'working', 'use', 'using', 'used', 'apply', 'applying', 'strong', 'strongly',
+  'excellent', 'extensive', 'deep', 'solid', 'proven', 'demonstrated', 'exposure',
+  'familiar', 'familiarity', 'knowledge', 'understanding', 'capability', 'capabilities',
+  'experience', 'experienced', 'expert', 'expertise', 'skilled', 'skill', 'skills',
+  'ability', 'able', 'highly', 'desirable', 'preferred', 'ideally', 'must', 'will',
+  'have', 'has', 'including', 'include', 'includes', 'such', 'other', 'others', 'plus',
+  'across', 'within', 'from', 'with', 'for', 'and', 'the', 'a', 'an', 'of', 'to', 'in',
+  'on', 'at', 'hiring', 'hire', 'looking', 'seeking', 'join', 'help', 'helping',
+  'supporting', 'support', 'driving', 'drive', 'delivering', 'deliver', 'leading', 'lead',
+]);
+
+/** Remove filler words from the front and back of a multi-word phrase. */
+const trimPhraseFiller = (term) => {
+  const parts = term.split(' ').filter(Boolean);
+  while (parts.length > 1 && PHRASE_FILLER.has(parts[0])) parts.shift();
+  while (parts.length > 1 && PHRASE_FILLER.has(parts[parts.length - 1])) parts.pop();
+  return parts.join(' ');
+};
 
 export default analyzeJobDescription;

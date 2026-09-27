@@ -230,5 +230,128 @@ check('all four report formats are offered', REPORT_FORMATS.map((f) => f.id).joi
 check('report never claims a gap is present', report.keywords.missing.every((k) => !optimizedText.includes(String(k.term).toLowerCase())));
 check('empty-jd run still builds a report', Boolean(emptyJd.report) && inRange(emptyJd.report.scores.jobMatch.after));
 
+console.log('\n12. score movement regressions');
+{
+  const atsOf = (r) => r.scores.optimized.components.find((c) => c.id === 'keywordCoverage').value;
+  const kcBefore = atsOf(out);
+  const kcAfter = out.scores.optimized.components.find((c) => c.id === 'keywordCoverage').value;
+  check('keyword coverage responds to the rewrite', kcAfter >= kcBefore, `${kcBefore}% -> ${kcAfter}%`);
+
+  // The JD share of keyword coverage used to be added as a 0-1 ratio instead of
+  // a 0-100 percentage, which pinned the component near its floor for every
+  // resume. It has to sit well above the 20-point user-keyword floor whenever
+  // the resume genuinely covers a decent share of the job's keywords.
+  const jdTerms = [...out.jd.highPriority, ...out.jd.mediumPriority].map((k) => k.term);
+  const hit = jdTerms.filter((t) => optimizedText.toLowerCase().includes(String(t).toLowerCase())).length;
+  check('keyword coverage is not pinned near the floor', kcBefore > 30 || hit === 0, `${kcBefore}% with ${hit}/${jdTerms.length} job terms present`);
+
+  // Duplicate content and missing keywords used to be scored from the ORIGINAL
+  // resume's match data on both sides, so the optimized side could never move.
+  const mk = (side) => out.scores[side].components.find((c) => c.id === 'missingKeywords').value;
+  const dup = (side) => out.scores[side].components.find((c) => c.id === 'duplicateContent').value;
+  check('missing keywords is scored per resume', mk('original') !== mk('optimized') || out.changeLog.filter((c) => c.type === 'keyword').length === 0, `${mk('original')}% -> ${mk('optimized')}%`);
+  check('duplicate content is scored per resume', typeof dup('original') === 'number' && typeof dup('optimized') === 'number', `${dup('original')}% -> ${dup('optimized')}%`);
+
+  const optAts = out.scores.optimized.overall;
+  const optJm = out.jobMatch.optimized.overall;
+  check('the rewrite never lowers the overall score', optAts >= out.scores.original.overall && optJm >= out.jobMatch.original.overall,
+    `ATS ${out.scores.original.overall}->${optAts}, JM ${out.jobMatch.original.overall}->${optJm}`);
+
+  const jmComps = out.jobMatch.optimized.components;
+  check('no job match component went backwards', jmComps.every((c, i) => c.value >= jmComps[i].value));
+}
+
+console.log('\n13. a skill proven in the body is promoted into the skills list');
+{
+  // SQL is proved by the bullet but left out of the skills line, so promoting it
+  // is a fact-safe gain. Kubernetes/Terraform are proved nowhere, so the next
+  // section checks they stay out.
+  const blocks = [
+    { type: 'paragraph', text: 'Data Analyst', fontSize: 20, bold: true, align: 'center', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'aarav.mehta.demo@example.com  |  Manchester, UK', fontSize: 9, bold: false, align: 'center', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'Professional Experience', fontSize: 12, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'Data Analyst  |  Acme Retail  |  Manchester, UK  |  Mar 2021 - Present', fontSize: 10.5, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+    { type: 'bullet', text: 'Built SQL dashboards for the retail team, cutting weekly manual reporting by 10 hours.', fontSize: 10, bold: false, align: 'left', bullet: true, marker: '\u2022', level: 0 },
+    { type: 'bullet', text: 'Reported weekly performance figures to regional leadership across 12 stores.', fontSize: 10, bold: false, align: 'left', bullet: true, marker: '\u2022', level: 0 },
+    { type: 'paragraph', text: 'Skills', fontSize: 12, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'Excel, Power BI, stakeholder management', fontSize: 10, bold: false, align: 'left', bullet: false, marker: null, level: 0 },
+  ];
+  const r = await runPipeline({
+    preparsed: { kind: 'docx', pageCount: 1, text: '', blocks },
+    jobDescription: 'We are hiring a Data Analyst. You will build SQL dashboards and reporting packs. Strong Excel required.',
+    targetRole: 'Data Analyst',
+    onProgress: () => {},
+  });
+  const skillsText = (r.optimizedResume.skills || []).flatMap((g) => g.items).join(' ').toLowerCase();
+  const bodyText = resumeToText(r.optimizedResume).toLowerCase();
+  check('the body-proven skill is present in the body', bodyText.includes('sql'));
+  check('the body-proven skill is promoted into skills', skillsText.includes('sql'), skillsText.slice(0, 90));
+  check('promotion was logged for the user', r.changeLog.some((c) => c.type === 'skills-promote'));
+  check('promotion did not trip the fact guard', r.guard.blocked.length === 0, r.guard.blocked.map((b) => b.detail).join('; '));
+  check('promotion did not lower the ATS score', r.scores.optimized.overall >= r.scores.original.overall, `${r.scores.original.overall}% -> ${r.scores.optimized.overall}%`);
+}
+
+console.log('\n14. a skill the resume never evidences is never added');
+{
+  const blocks = [
+    { type: 'paragraph', text: 'Data Analyst', fontSize: 20, bold: true, align: 'center', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'aarav.mehta.demo@example.com  |  Manchester, UK', fontSize: 9, bold: false, align: 'center', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'Professional Experience', fontSize: 12, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'Data Analyst  |  Acme Retail  |  Manchester, UK  |  Mar 2021 - Present', fontSize: 10.5, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+    { type: 'bullet', text: 'Built SQL dashboards for the retail team and reported weekly figures to leadership.', fontSize: 10, bold: false, align: 'left', bullet: true, marker: '\u2022', level: 0 },
+    { type: 'paragraph', text: 'Skills', fontSize: 12, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'Excel, Power BI', fontSize: 10, bold: false, align: 'left', bullet: false, marker: null, level: 0 },
+  ];
+  const r = await runPipeline({
+    preparsed: { kind: 'docx', pageCount: 1, text: '', blocks },
+    jobDescription: 'We are hiring a Data Analyst. You must have expert Kubernetes and Terraform experience running production infrastructure.',
+    targetRole: 'Data Analyst',
+    onProgress: () => {},
+  });
+  const text = resumeToText(r.optimizedResume).toLowerCase();
+  const invents = ['kubernetes', 'terraform'].filter((t) => text.includes(t));
+  check('no unproven skill was injected', invents.length === 0, invents.join(', ') || 'none');
+  check('they are reported as missing instead', r.match.missing.some((k) => /kubernetes/i.test(k.term)), `${r.match.missing.length} missing`);
+  check('the guard is clean', r.guard.blocked.length === 0);
+}
+
+console.log('\n15. every unmoved component can explain itself');
+{
+  const all = [...report.scores.jobMatch.components, ...report.scores.ats.components];
+  // A component already sitting at 100 has no gap left to explain. Anything
+  // unmoved and short of 100 is still costing the candidate points, so it has to
+  // say why the rewrite could not close it.
+  const stuck = all.filter((c) => c.delta === 0);
+  const unexplained = stuck.filter((c) => c.after < 100 && !c.lockedReason);
+  check('no unmoved component below full marks is silently locked', unexplained.length === 0, unexplained.map((c) => c.label).join(', ') || `${stuck.filter((c) => c.after < 100).length} unmoved and short of 100, all explained`);
+  const titleC = report.scores.ats.components.find((c) => c.id === 'titleAlignment');
+  check('title alignment explains why it cannot move', titleC?.movable === false && /did not hold|actually held/i.test(titleC.lockedReason || ''));
+  const fmtC = report.scores.ats.components.find((c) => c.id === 'sectionStructure');
+  check('formatting compatibility explains its remaining gap', /document length/i.test(fmtC?.lockedReason || ''), fmtC?.lockedReason?.slice(0, 48));
+  check('markdown explains the unmoved components', /Why \d+ of these did not move/.test(md) || stuck.filter((c) => c.after < 100).length === 0);
+  check('plain text explains the unmoved components', /WHY \d+ OF THESE DID NOT MOVE/.test(txt) || stuck.filter((c) => c.after < 100).length === 0);
+  check('html explains the unmoved components', /class="why"/.test(html) || stuck.filter((c) => c.after < 100).length === 0);
+  check('json carries the locked reasons', Boolean(roundTrip?.scores?.ats?.components?.find((c) => c.id === 'titleAlignment')?.lockedReason));
+}
+
+console.log('\n16. a generated summary invents no tenure figure');
+{
+  const blocks = [
+    { type: 'paragraph', text: 'Data Analyst', fontSize: 20, bold: true, align: 'center', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'a@b.com  |  Manchester, UK', fontSize: 9, bold: false, align: 'center', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'Professional Experience', fontSize: 12, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'Data Analyst  |  Acme Retail  |  Manchester, UK  |  Mar 2021 - Present', fontSize: 10.5, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+    { type: 'bullet', text: 'Built SQL dashboards for the retail team and reported weekly figures to leadership.', fontSize: 10, bold: false, align: 'left', bullet: true, marker: '\u2022', level: 0 },
+    { type: 'paragraph', text: 'Skills', fontSize: 12, bold: true, align: 'left', bullet: false, marker: null, level: 0 },
+    { type: 'paragraph', text: 'Excel, Power BI', fontSize: 10, bold: false, align: 'left', bullet: false, marker: null, level: 0 },
+  ];
+  const r = await runPipeline({ preparsed: { kind: 'docx', pageCount: 1, text: '', blocks }, jobDescription: 'Data Analyst role. SQL and Excel required.', targetRole: 'Data Analyst', onProgress: () => {} });
+  check('a summary was generated', Boolean(r.optimizedResume.summary), r.optimizedResume.summary);
+  check('the generated summary states no years figure', !/\d+\s*\+?\s*years?/i.test(r.optimizedResume.summary || ''), r.optimizedResume.summary);
+  check('the generated summary introduced no number', !/\d/.test(r.optimizedResume.summary || ''), r.optimizedResume.summary);
+  check('a generated summary counts as a real section', (r.optimizedResume.sections || []).some((s) => s.id === 'summary'));
+  check('the guard is clean after generating a summary', r.guard.blocked.length === 0, r.guard.blocked.map((b) => b.detail).join('; '));
+}
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}\n`);
 process.exit(failures === 0 ? 0 : 1);

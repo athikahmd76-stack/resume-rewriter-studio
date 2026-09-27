@@ -43,6 +43,7 @@ const Gauge = memo(function Gauge({ value, band, delta }) {
 
 const MetricRow = memo(function MetricRow({ component, originalValue }) {
   const delta = originalValue !== undefined ? component.value - originalValue : null;
+  const stuck = delta === 0 && component.lockedReason;
   return (
     <div className="metric" title={component.hint}>
       <span className="metric__label">{component.label}</span>
@@ -57,6 +58,12 @@ const MetricRow = memo(function MetricRow({ component, originalValue }) {
       <span className="metric__bar">
         <span className="metric__fill" style={{ width: `${component.value}%`, background: scoreColor(component.value) }} />
       </span>
+      {stuck ? (
+        <span className="metric__why">
+          <span className="ba-comp__whytag">{component.movable === 'conditional' ? 'Evidence-limited' : 'Locked'}</span>
+          {component.lockedReason}
+        </span>
+      ) : null}
     </div>
   );
 });

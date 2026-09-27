@@ -217,6 +217,128 @@ const insertKeywords = (text, insertable, settings, log, location) => {
   return out;
 };
 
+/**
+ * Align synonyms only when doing so measurably increases keyword coverage.
+ *
+ * Whether a substitution is worth making is a property of the WHOLE resume, not
+ * of the one bullet it happens to land in. Swapping "demand planning" for the
+ * JD's "forecasting" is a clear gain when the skills section still says "demand
+ * planning", and a clear loss when that single mention was the only one. The
+ * only reliable way to tell the two apart is to count covered terms before and
+ * after, which is what this pass does. Anything that does not strictly increase
+ * the count is rolled back, so the rewrite can never lose ground.
+ */
+const alignKeywordCoverage = ({ resume, match, jd, log }) => {
+  const targets = [...new Set([
+    ...(jd?.highPriority || []).map((k) => k.term),
+    ...(jd?.mediumPriority || []).map((k) => k.term),
+    ...(jd?.requiredSkills || []),
+    ...(jd?.hardRequirements || []),
+    ...(jd?.domainTerms || []),
+    ...(match?.matched || []).map((m) => m.term),
+    ...(match?.missing || []).map((m) => m.term),
+  ].filter(Boolean))];
+  if (!targets.length) return resume;
+
+  const coveredCount = (text) => {
+    const lower = text.toLowerCase();
+    return targets.reduce((n, t) => (textMentionsTerm(lower, t) ? n + 1 : n), 0);
+  };
+
+  const candidates = (match?.matched || [])
+    .filter((m) => m.canInsert && m.status !== 'MATCHED' && m.resumeTerm)
+    .filter((m) => substitutionAllowed(m.resumeTerm, m.term))
+    .sort((a, b) => (b.priority === 'HIGH' ? 1 : 0) - (a.priority === 'HIGH' ? 1 : 0));
+
+  let current = resume;
+  let best = coveredCount(resumeToText(current));
+  let accepted = 0;
+
+  for (const c of candidates) {
+    if (textMentionsTerm(resumeToText(current), c.term)) continue;
+    const trial = replaceFirst(current, c.resumeTerm, c.term);
+    if (!trial) continue;
+    const trialCount = coveredCount(resumeToText(trial));
+    if (trialCount <= best) continue; // no gain, so do not make the trade
+    RECORD(log, {
+      type: 'keyword',
+      location: 'resume',
+      from: `"${c.resumeTerm}"`,
+      to: `"${c.term}"`,
+      keyword: c.display,
+      label: `Aligned terminology: "${c.resumeTerm}" -> "${c.display}" (meaning preserved, keyword coverage ${best} -> ${trialCount})`,
+    });
+    current = trial;
+    best = trialCount;
+    accepted += 1;
+  }
+  if (accepted) current.meta = { ...current.meta, keywordCoverageGain: best };
+  return current;
+};
+
+/** Replace the first occurrence of `from` with `to` across the resume's text fields. */
+const replaceFirst = (resume, from, to) => {
+  const swap = (s) => {
+    if (!s || !textMentionsTerm(s, from)) return null;
+    const idx = String(s).toLowerCase().indexOf(String(from).toLowerCase());
+    if (idx === -1) return null;
+    const original = String(s);
+    const replaced = `${original.slice(0, idx)}${to}${original.slice(idx + from.length)}`;
+    return replaced === original ? null : replaced;
+  };
+
+  let changed = false;
+  const next = cloneResume(resume);
+
+  const bulletSwap = (entry) => {
+    let touched = false;
+    const out = { ...entry };
+    for (const key of ['responsibilities', 'achievements']) {
+      if (!Array.isArray(out[key])) continue;
+      out[key] = out[key].map((b) => {
+        if (touched) return b;
+        const r = swap(b);
+        if (r) touched = true;
+        return r || b;
+      });
+    }
+    return touched ? out : null;
+  };
+
+  const ns = swap(next.summary);
+  if (ns) { next.summary = ns; changed = true; }
+
+  if (!changed && next.skills?.length) {
+    next.skills = next.skills.map((g) => {
+      const items = g.items.map((i) => swap(i)).filter(Boolean);
+      if (items.length !== g.items.length) { changed = true; return { ...g, items, source: items.join(', ') }; }
+      return g;
+    });
+  }
+
+  if (!changed) {
+    next.experience = (next.experience || []).map((e) => bulletSwap(e)).filter(Boolean);
+    changed = next.experience.length !== (resume.experience || []).length
+      || next.experience.some((e, i) => e !== resume.experience[i]);
+  }
+
+  if (!changed) {
+    next.projects = (next.projects || []).map((p) => {
+      let touched = false;
+      const bullets = (p.bullets || []).map((b) => {
+        if (touched) return b;
+        const r = swap(b);
+        if (r) touched = true;
+        return r || b;
+      });
+      return touched ? { ...p, bullets } : p;
+    });
+    changed = next.projects.some((p, i) => p !== resume.projects[i]);
+  }
+
+  return changed ? next : null;
+};
+
 // ---------------------------------------------------------------------------
 // Tense
 // ---------------------------------------------------------------------------
@@ -435,13 +557,15 @@ const buildSummary = ({ resume, settings, match, log }) => {
     .map((m) => m.display)
     .filter((t) => t && t.length < 40);
 
-  const years = yearsFromExperience(resume.experience || []);
-
+  // Deliberately no tenure figure here. A number of years can be derived from
+  // the dates, but the source resume never stated it, and a generated summary
+  // is not the place to put a claim the candidate did not write. It also drifts
+  // with the clock, and the fact guard rightly rejects any number the source
+  // does not contain.
   let text;
   if (role) {
-    const second = years !== null && years >= 1 ? `with ${years}+ years of experience` : '';
-    const third = topTerms.length ? `in ${listWords(topTerms)}` : '';
-    text = [role, second, third].filter(Boolean).join(' ');
+    const second = topTerms.length ? `with experience in ${listWords(topTerms)}` : '';
+    text = [role, second].filter(Boolean).join(' ');
   } else if (topTerms.length) {
     text = `Professional with experience in ${listWords(topTerms)}`;
   } else {
@@ -488,6 +612,58 @@ const rewriteSummary = ({ resume, settings, match, log }) => {
 // Skills
 // ---------------------------------------------------------------------------
 
+/**
+ * Surface job-relevant skills the candidate has ALREADY proved in their
+ * experience but never repeated in the skills section.
+ *
+ * This is the largest honest gain available to the rewrite. Keyword and skill
+ * matching are the two heaviest components of both scores, and a skill that
+ * appears in a bullet is just as real as one in a list - it is simply in the
+ * wrong place for a machine to find it. Nothing is asserted that the source
+ * resume does not already state, and the fact guard re-checks every promoted
+ * term against the whole source text.
+ */
+const promoteProvenSkills = ({ resume, skills, match, settings, log }) => {
+  if (!settings.optimizeKeywords || !match) return skills;
+  const groups = skills.map((g) => ({ ...g, items: [...g.items] }));
+  if (!groups.length) return skills;
+
+  const listed = new Set(
+    groups.flatMap((g) => g.items).map((i) => normalizeKeyword(i)).filter(Boolean),
+  );
+  const bodyText = `${resume.summary || ''}\n${(resume.experience || []).flatMap((e) => [e.role, e.company, ...experienceBullets(e)].filter(Boolean)).join(' \n ')}\n${(resume.projects || []).flatMap((p) => p.bullets || []).join(' \n ')}`;
+
+  // Only terms the matcher already vouched for, most wanted first.
+  const candidates = (match.matched || [])
+    .filter((m) => m.canInsert)
+    .filter((m) => m.priority === 'HIGH' || m.priority === 'MEDIUM' || m.source === 'user' || m.source === 'target-role')
+    .sort((a, b) => (a.priority === 'HIGH' ? -1 : 1) - (b.priority === 'HIGH' ? -1 : 1));
+
+  const target = groups[groups.length - 1];
+  const promoted = [];
+  for (const m of candidates) {
+    const term = m.display || m.term;
+    const key = normalizeKeyword(term);
+    if (!key || key.length < 2 || key.length > 40) continue;
+    if (listed.has(key)) continue;
+    if (!textMentionsTerm(bodyText, term)) continue; // must be proven somewhere
+    listed.add(key);
+    target.items.push(term);
+    promoted.push(term);
+  }
+
+  if (promoted.length) {
+    RECORD(log, {
+      type: 'skills-promote',
+      location: 'skills',
+      from: target.items.slice(0, target.items.length - promoted.length).join(', '),
+      to: target.items.join(', '),
+      label: `Moved ${promoted.length} skill(s) you already demonstrate in your experience into the skills list: ${promoted.join(', ')}`,
+    });
+  }
+  return groups;
+};
+
 const rewriteSkills = ({ resume, settings, match, log }) => {
   if (!resume.skills?.length) return resume.skills || [];
   const jdOrder = new Map();
@@ -517,7 +693,8 @@ const rewriteSkills = ({ resume, settings, match, log }) => {
     return { ...group, items, source: items.join(', ') };
   });
 
-  return out;
+  const promoted = promoteProvenSkills({ resume, skills: out, match, settings, log });
+  return promoted.map((group) => ({ ...group, source: group.items.join(', ') }));
 };
 
 // ---------------------------------------------------------------------------
@@ -540,6 +717,14 @@ export const rewriteResume = ({ resume, match, jd, userSettings }) => {
   const summaryResult = rewriteSummary({ resume, settings, match, log });
   out.summary = summaryResult.text;
   out.summaryGenerated = summaryResult.generated;
+
+  // A generated summary is a real section. Without this the structure score kept
+  // reading the source section list and never credited adding one.
+  if (out.summary && !out.sections?.some((s) => s.id === 'summary')) {
+    const firstBody = (out.sections || []).findIndex((s) => ['experience', 'skills', 'education', 'certifications'].includes(s.id));
+    const at = firstBody === -1 ? (out.sections || []).length : firstBody;
+    out.sections = [...(out.sections || []).slice(0, at), { id: 'summary', title: 'Professional Summary' }, ...(out.sections || []).slice(at)];
+  }
 
   // --- experience ----------------------------------------------------------
   out.experience = (resume.experience || []).map((entry, entryIndex) => {
@@ -628,6 +813,15 @@ export const rewriteResume = ({ resume, match, jd, userSettings }) => {
   }));
 
   out.languages = (resume.languages || []).map((l) => ({ ...l, text: cleanSpacing(l.text || '') }));
+
+  // --- final, measured keyword alignment -----------------------------------
+  // Runs on the assembled resume so coverage is judged across the whole
+  // document. Only substitutions that strictly increase the number of covered
+  // job keywords are kept, so this pass can only ever help.
+  if (settings.optimizeKeywords) {
+    const aligned = alignKeywordCoverage({ resume: out, match, jd, log });
+    for (const key of ['summary', 'experience', 'skills', 'projects']) out[key] = aligned[key];
+  }
 
   out.other = (resume.other || []).map((o) => ({
     ...o,
@@ -724,11 +918,18 @@ export const runFactGuard = ({ beforeText, afterText, beforeResume, afterResume,
     }
   }
 
-  // 6. skills must be a subset of the source skills
-  const sourceSkillText = (beforeResume?.skills || []).flatMap((s) => s.items || []).join(' | ');
+  // 6. skills must already appear somewhere in the source resume
+  //
+  // This has to check the WHOLE source resume, not just the skills lists. A
+  // skill the candidate proved in an experience bullet but never repeated in
+  // the skills section is still their skill, and hoisting it into the skills
+  // list is restructuring rather than inventing. Checking only the skills
+  // lists flagged those as fabricated and blocked the single most useful
+  // honest optimisation the rewrite can make.
+  const sourceEvidence = beforeText || '';
   for (const group of afterResume?.skills || []) {
     for (const item of group.items || []) {
-      if (textMentionsTerm(sourceSkillText, item)) continue;
+      if (textMentionsTerm(sourceEvidence, item)) continue;
       if ([...(match?.matched || [])].some((m) => m.canInsert && substitutionAllowed(m.resumeTerm || '', normalizeKeyword(item)))) continue;
       issues.push({ severity: 'critical', kind: 'skill-added', detail: `Skill "${item}" is not present in the source resume and has no allow-listed synonym. It has been blocked.`, term: item });
     }

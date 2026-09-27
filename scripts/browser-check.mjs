@@ -245,6 +245,19 @@ try {
       comps: blocks.map((b) => b.querySelectorAll('.ba-comp').length),
       headline: card.querySelector('.ba-headline')?.textContent || '',
       labels: [...card.querySelectorAll('.ba-compare__cap')].map((n) => n.textContent.trim()),
+      // Any component that did not move and is short of 100 has to say why.
+      stuckReasons: [...card.querySelectorAll('.ba-comp')]
+        .filter((r) => r.querySelector('.ba-comp__why'))
+        .map((r) => ({
+          label: r.querySelector('.ba-comp__label')?.textContent.trim() || '',
+          tag: r.querySelector('.ba-comp__whytag')?.textContent.trim() || '',
+          why: (r.querySelector('.ba-comp__why')?.textContent || '').replace(/\s+/g, ' ').trim(),
+        })),
+      stuckUnmoved: [...card.querySelectorAll('.ba-comp')].filter((r) => {
+        const d = r.querySelector('.ba-comp__delta')?.textContent.trim() || '';
+        const after = Number((r.querySelector('.ba-comp__now')?.textContent || '0').replace('%', ''));
+        return d === '0' && after < 100 && !r.querySelector('.ba-comp__why');
+      }).map((r) => r.querySelector('.ba-comp__label')?.textContent.trim() || ''),
     };
   });
   check('job match and ats blocks both render', jobMatch.blocks === 2, jobMatch.titles.join(' | '));
@@ -256,6 +269,12 @@ try {
   check('both blocks show a delta', jobMatch.deltas.every((d) => d.length > 0), jobMatch.deltas.join('  |  '));
   check('components are broken out', jobMatch.comps.every((c) => c > 0), jobMatch.comps.join(' / '));
   check('job match headline renders', jobMatch.headline.length > 10, jobMatch.headline.slice(0, 90));
+  check('every unmoved component below 100 explains itself',
+    jobMatch.stuckUnmoved.length === 0,
+    jobMatch.stuckUnmoved.join(', ') || `${jobMatch.stuckReasons.length} explained: ${jobMatch.stuckReasons.map((r) => `${r.label} [${r.tag}]`).join(', ')}`);
+  check('an explanation is actually shown to the user',
+    jobMatch.stuckReasons.length > 0 && jobMatch.stuckReasons.every((r) => r.why.length > 40),
+    jobMatch.stuckReasons[0] ? `${jobMatch.stuckReasons[0].tag}: ${jobMatch.stuckReasons[0].why.slice(0, 70)}...` : 'none rendered');
 
   console.log('\n11. swot tab');
   await page.click('button[role="tab"]:has-text("SWOT")');
@@ -291,6 +310,21 @@ try {
   await page.click('button[role="tab"]:has-text("ATS Analysis")');
   await page.waitForSelector('#panel-ats', { timeout: 15000 });
   check('all four formats are on the ats tab', await formatsIn('#panel-ats') === 4, await formatsIn('#panel-ats'));
+  const atsWhy = await page.evaluate(() => [...document.querySelectorAll('#panel-ats .metric')].map((r) => {
+    const valueText = (r.querySelector('.metric__value')?.textContent || '').trim();
+    return {
+      label: r.querySelector('.metric__label')?.textContent.trim() || '',
+      value: Number((valueText.match(/^(\d+)%/) || [])[1] || 0),
+      // The delta badge only renders when the component actually moved.
+      moved: /%\s*[+-]\d+/.test(valueText),
+      why: (r.querySelector('.metric__why')?.textContent || '').replace(/\s+/g, ' ').trim(),
+    };
+  }));
+  // A component that neither moved nor already sits at 100 is still costing the
+  // candidate points, so it has to carry a reason.
+  const silent = atsWhy.filter((r) => !r.moved && !r.why && r.value < 100);
+  check('every ats component that did not move explains itself', silent.length === 0,
+    silent.map((r) => r.label).join(', ') || `${atsWhy.filter((r) => r.why).length} explained: ${atsWhy.filter((r) => r.why).map((r) => r.label).join(', ')}`);
   await page.click('button[role="tab"]:has-text("SWOT")');
   await page.waitForSelector('#panel-swot', { timeout: 15000 });
   check('all four formats are on the swot tab', await formatsIn('#panel-swot') === 4, await formatsIn('#panel-swot'));

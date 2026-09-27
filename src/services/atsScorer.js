@@ -25,6 +25,7 @@ import { countWords, clampPercent, similarity } from '../utils/textUtils.js';
 import { textMentionsTerm, normalizeKeyword } from '../utils/keywordUtils.js';
 import { hasMetric } from './resumeParser.js';
 import { CANONICAL_SECTION_ORDER } from '../data/sectionDictionary.js';
+import { auditResumeRepetition } from './keywordMatcher.js';
 
 const WEIGHTS = {
   keywordCoverage: 0.2,
@@ -94,8 +95,12 @@ export const scoreAts = (resume, jd, match, options = {}) => {
   const userMatched = userTargets.filter((m) => textMentionsTerm(lowerText, m.term));
   const keywordCoverage = uniqueTargets.length
     ? clampPercent(
-      (matchedTargets.reduce((acc, t) => acc + t.weight, 0) / uniqueTargets.reduce((acc, t) => acc + t.weight, 0)) * 0.8
-      + (userTargets.length ? (userMatched.length / userTargets.length) * 100 * 0.2 : 20),
+      // The JD share of the score has to be scaled to 0-100 before it is
+      // blended with the user's own keywords. Without the *100 the whole
+      // JD-relevance half contributed well under a point, which pinned this
+      // component near its floor and made it look immovable for every resume.
+      (matchedTargets.reduce((acc, t) => acc + t.weight, 0) / uniqueTargets.reduce((acc, t) => acc + t.weight, 0)) * 80
+      + (userTargets.length ? (userMatched.length / userTargets.length) * 100 * 20 : 20),
     )
     : (userTargets.length ? pct(userMatched.length, userTargets.length) : 55);
 
@@ -161,32 +166,86 @@ export const scoreAts = (resume, jd, match, options = {}) => {
   const sectionStructure = clampPercent(pct(presentCount, requiredSections.length) * 0.65 + orderBonus * 0.35 - lengthPenalty);
 
   // --- 8. duplicate content -----------------------------------------------
-  const dupes = match?.resumeAudit?.duplicateBullets?.length || 0;
-  const overused = (match?.resumeAudit?.overused || []).filter((o) => o.mentions >= 5).length;
+  // Audited on THIS resume, not on the source. The rewrite de-duplicates
+  // bullets, and reading the source audit here would score the optimized
+  // resume for a defect it just fixed.
+  const audit = auditResumeRepetition(resume);
+  const dupes = audit.duplicateBullets.length;
+  const overused = audit.overused.filter((o) => o.mentions >= 5).length;
   const duplicateContent = clampPercent(100 - dupes * 12 - overused * 4);
 
   // --- 9. missing keywords -------------------------------------------------
-  const missingHigh = (match?.missing || []).filter((m) => m.priority === 'HIGH' || m.source === 'user');
-  const missingKeywords = missingHigh.length
-    ? clampPercent(100 - Math.min(100, missingHigh.length * 12))
-    : 92;
+  // Counted against THIS resume's text. Using the source match here would
+  // freeze the component for every rewrite, so a keyword the rewrite validly
+  // aligned through an allow-listed synonym could never register as covered.
+  const highOrUser = [
+    ...(jd?.highPriority || []).map((k) => ({ term: k.term, display: k.display || k.term })),
+    ...(match?.missing || []).filter((m) => m.source === 'user').map((m) => ({ term: m.term, display: m.display })),
+    ...(match?.matched || []).filter((m) => m.source === 'user').map((m) => ({ term: m.term, display: m.display })),
+  ];
+  const seenMissing = new Set();
+  const uniqueHigh = highOrUser.filter((t) => {
+    const key = normalizeKeyword(t.term) || String(t.term).toLowerCase();
+    if (!key || seenMissing.has(key)) return false;
+    seenMissing.add(key);
+    return true;
+  });
+  const stillMissing = uniqueHigh.filter((t) => !textMentionsTerm(lowerText, t.term));
+  const missingKeywords = stillMissing.length
+    ? clampPercent(100 - Math.min(100, stillMissing.length * 12))
+    : (uniqueHigh.length ? 100 : 92);
 
   // --- 10. unsupported keywords --------------------------------------------
   const unsupported = (match?.unsupported || []).filter((m) => m.category === 'technology' || m.category === 'domain-skill');
   const claimedUnsupported = unsupported.filter((m) => textMentionsTerm(lowerText, m.term));
   const unsupportedKeywords = clampPercent(100 - claimedUnsupported.length * 25 - (unsupported.length ? 4 : 0));
 
+  // `movable` is false where a higher score would require a claim the engine is
+  // not allowed to make. The UI shows the reason instead of leaving the user
+  // looking at a delta of zero and assuming the rewrite did nothing.
   const components = [
     { id: 'keywordCoverage', label: 'Keyword Match', value: keywordCoverage, weight: WEIGHTS.keywordCoverage, hint: 'Share of job-description and target keywords present in the resume.' },
     { id: 'jdRelevance', label: 'JD Alignment', value: jdRelevance, weight: WEIGHTS.jdRelevance, hint: 'How much of the resume language maps onto the job description.' },
     { id: 'skillAlignment', label: 'Skill Match', value: skillAlignment, weight: WEIGHTS.skillAlignment, hint: 'Required skills found versus required skills requested.' },
-    { id: 'titleAlignment', label: 'Experience Relevance', value: titleAlignment, weight: WEIGHTS.titleAlignment, hint: 'Job-title overlap between the target role and the held roles.' },
+    {
+      id: 'titleAlignment',
+      label: 'Experience Relevance',
+      value: titleAlignment,
+      weight: WEIGHTS.titleAlignment,
+      hint: 'Job-title overlap between the target role and the held roles.',
+      movable: false,
+      lockedReason: 'This compares the job titles you actually held with the title you are applying for. Rewriting cannot change it without claiming a role you did not hold, so it only moves if your real titles already match.',
+    },
     { id: 'actionVerbs', label: 'Action Verbs', value: actionVerbs, weight: WEIGHTS.actionVerbs, hint: 'Bullets that open with a strong, results-oriented verb.' },
     { id: 'readability', label: 'Readability', value: readability, weight: WEIGHTS.readability, hint: 'Bullet length, sentence length and removal of passive phrasing.' },
-    { id: 'sectionStructure', label: 'Formatting Compatibility', value: sectionStructure, weight: WEIGHTS.sectionStructure, hint: 'Standard ATS headings, ordering and document length.' },
+    {
+      id: 'sectionStructure',
+      label: 'Formatting Compatibility',
+      value: sectionStructure,
+      weight: WEIGHTS.sectionStructure,
+      hint: 'Standard ATS headings, ordering and document length.',
+      movable: 'conditional',
+      lockedReason: 'The rewrite already normalises your headings, heading order and date formats, so those parts are as high as your document allows. Whatever is left comes from the document length and from which standard sections you actually have, and neither can be invented for you.',
+    },
     { id: 'duplicateContent', label: 'Duplicate Content', value: duplicateContent, weight: WEIGHTS.duplicateContent, hint: 'Penalty for repeated bullets and over-used phrases.' },
-    { id: 'missingKeywords', label: 'Missing Keywords', value: missingKeywords, weight: WEIGHTS.missingKeywords, hint: 'Penalty for high-priority job keywords absent from the resume.' },
-    { id: 'unsupportedKeywords', label: 'Unsupported Keywords', value: unsupportedKeywords, weight: WEIGHTS.unsupportedKeywords, hint: 'Penalty for claiming skills the source resume cannot support.' },
+    {
+      id: 'missingKeywords',
+      label: 'Missing Keywords',
+      value: missingKeywords,
+      weight: WEIGHTS.missingKeywords,
+      hint: 'Penalty for high-priority job keywords absent from the resume.',
+      movable: 'conditional',
+      lockedReason: 'Only keywords your resume already proves can close this gap. A keyword you demonstrate in your experience is carried into your skills list, but anything the job asks for and your resume does not evidence is reported as missing and left out. So this rises as far as your real experience allows, and no further.',
+    },
+    {
+      id: 'unsupportedKeywords',
+      label: 'Unsupported Keywords',
+      value: unsupportedKeywords,
+      weight: WEIGHTS.unsupportedKeywords,
+      hint: 'Penalty for claiming skills the source resume cannot support.',
+      movable: false,
+      lockedReason: 'Skills are only ever promoted from evidence already in your experience, so this is held at 100 on purpose. It falls only if you claim something your resume does not back up, and the Comparison tab lists anything unsupported it found.',
+    },
   ];
 
   const overall = clampPercent(components.reduce((acc, c) => acc + c.value * c.weight, 0));

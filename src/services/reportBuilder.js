@@ -52,6 +52,10 @@ const pairComponents = (before, after) => {
       label: c.label,
       hint: c.hint,
       weight: c.weight,
+      // Carried through so a component that cannot move can say why instead of
+      // leaving the reader to assume the rewrite simply did nothing.
+      movable: c.movable,
+      lockedReason: c.lockedReason,
       before: num(b?.value),
       after: num(c.value),
       delta: num(c.value) - num(b?.value),
@@ -248,6 +252,14 @@ export const reportToMarkdown = (report) => {
     L.push('| Component | Before | After | Change |', '| --- | --- | --- | --- |');
     for (const c of s.components) L.push(`| ${c.label} | ${c.before}% | ${c.after}% | ${signed(c.delta)} |`);
     L.push('');
+    const stuck = s.components.filter((c) => c.delta === 0 && c.lockedReason);
+    if (stuck.length) {
+      L.push(`**Why ${stuck.length} of these did not move**`, '');
+      for (const c of stuck) {
+        L.push(`- **${c.label}** (${c.movable === 'conditional' ? 'evidence-limited' : 'locked'}) - ${c.lockedReason}`);
+      }
+      L.push('');
+    }
     if (s.verdict) L.push(`> ${s.verdict}`, '');
   }
 
@@ -323,6 +335,14 @@ export const reportToText = (report) => {
       L.push(`  ${c.label.padEnd(28)} ${String(`${c.before}%`).padStart(5)} -> ${String(`${c.after}%`).padStart(5)}  (${signed(c.delta)})`);
     }
     L.push('');
+    const stuck = s.components.filter((c) => c.delta === 0 && c.lockedReason);
+    if (stuck.length) {
+      L.push(`WHY ${stuck.length} OF THESE DID NOT MOVE`, thin);
+      for (const c of stuck) {
+        L.push(`  [${(c.movable === 'conditional' ? 'EVIDENCE-LIMITED' : 'LOCKED')}] ${c.label}\n      ${c.lockedReason}`);
+      }
+      L.push('');
+    }
   }
 
   L.push('SWOT ANALYSIS', thin, report.swot.disclaimer, '');
@@ -406,7 +426,10 @@ export const reportToHtml = (report) => {
           <thead><tr><th>Component</th><th>Before</th><th>After</th><th>Change</th></tr></thead>
           <tbody>${s.components.map((c) => `
             <tr>
-              <td>${esc(c.label)}<span class="hint">${esc(c.hint)}</span></td>
+              <td>${esc(c.label)}<span class="hint">${esc(c.hint)}</span>${
+  c.delta === 0 && c.lockedReason
+    ? `<span class="tag">${c.movable === 'conditional' ? 'Evidence-limited' : 'Locked'}</span><span class="why">${esc(c.lockedReason)}</span>`
+    : ''}</td>
               <td class="num">${c.before}%</td>
               <td class="num num--after">${c.after}%</td>
               <td class="num ${num(c.delta) >= 0 ? 'is-up' : 'is-down'}">${signed(c.delta)}</td>
@@ -475,6 +498,12 @@ export const reportToHtml = (report) => {
   .num--after { font-weight:700; }
   .is-up { color:var(--ok); } .is-down { color:var(--danger); }
   .hint { display:block; color:var(--muted); font-size:11.5px; margin-top:2px; }
+.why { display:block; color:var(--muted-2); font-size:11.5px; margin-top:3px; line-height:1.5; }
+.tag {
+  display:inline-block; margin-top:5px; padding:1px 6px; border:1px solid var(--line);
+  border-radius:999px; background:#f8fafc; color:var(--muted);
+  font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+}
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   .quadrant { border:1px solid var(--line); border-top-width:3px; border-radius:12px; padding:15px 16px; }
   .quadrant--s { border-top-color:#16a34a; background:#f0fdf4; }

@@ -86,6 +86,12 @@ const ScoreBlock = memo(function ScoreBlock({ score, icon, tone, caption, discla
                 <Bar value={c.before} label={`${c.label} before`} />
                 <Bar value={c.after} label={`${c.label} after`} />
               </span>
+              {c.lockedReason && c.delta === 0 ? (
+                <span className="ba-comp__why">
+                  <span className="ba-comp__whytag">{c.movable === 'conditional' ? 'Evidence-limited' : 'Locked'}</span>
+                  {c.lockedReason}
+                </span>
+              ) : null}
             </div>
           ))}
         </div>

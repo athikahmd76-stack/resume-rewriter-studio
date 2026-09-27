@@ -150,6 +150,30 @@ the headline number can be checked rather than trusted.
 any edits you make. The delta is shown in points, and a negative delta is displayed as a regression rather than
 quietly dropped.
 
+### Why a delta can be small, and what the app does about it
+
+Not every score can move, and the app would rather tell you that than show you a number you cannot trust. Three
+things are worth knowing.
+
+**Some components are locked by design.** Job-title relevance and role alignment compare the titles you actually
+held against the title you are applying for. Raising them would mean claiming a role you did not hold, so the
+rewrite does not touch them. Unsupported-keyword scoring is held at 100 on purpose, because skills are only ever
+promoted from evidence already in your resume. Whenever a component cannot move, the app prints the reason under it
+- in the Job Match card, in the ATS tab, and in all four report formats.
+
+**The rewrite only closes gaps your resume can actually close.** A skill you demonstrate in an experience bullet
+but never repeated in your skills list gets hoisted into the list, because that is restructuring rather than
+inventing. Anything the job asks for and your resume does not evidence is reported as a missing keyword and left
+out. A low ceiling on keyword coverage therefore means a real gap, not a lazy rewrite.
+
+**Synonym swaps are measured, not assumed.** Aligning your wording to the job's phrasing only helps if it actually
+increases the number of job keywords your resume covers, and that is a property of the whole document rather than
+of the one sentence the swap lands in. Every substitution is applied only if the covered-keyword count goes up as a
+result, so the rewrite cannot trade one covered keyword for another and call it an improvement.
+
+A resume that is already clean and well-matched can legitimately show a delta of zero. The app will tell you that
+was the reason rather than leaving you to guess.
+
 **SWOT** is derived from the same two passes, so it cannot contradict the scores: strengths are terms the rewrite
 actually demonstrated, weaknesses are proven gaps, opportunities are job-description terms you already satisfy,
 and threats are requirements with no evidence in the source. Every finding names the evidence behind it, and the
@@ -204,14 +228,17 @@ These are enforced by the code and covered by the test suites.
 2. **Structure** - `layoutAnalyzer` detects sections, margins, column count, fonts and A4/Letter geometry;
    `resumeParser` turns lines into a resume model (contact, summary, experience, skills, education, certifications,
    languages, other).
-3. **Analyse the job** - `jdAnalyzer` extracts keywords with priority and required-skill weighting;
-   `keywordMatcher` classifies every keyword as matched, missing, or matched-via-synonym, and flags JD terms that
-   the resume cannot support.
+3. **Analyse the job** - `jdAnalyzer` extracts keywords with priority and required-skill weighting, trimming
+   filler words off the front and back of an extracted phrase so a term like "sql" stays matchable when the posting
+   says "build SQL dashboards". `keywordMatcher` classifies every keyword as matched, missing, or
+   matched-via-synonym, and flags JD terms that the resume cannot support.
 4. **Rewrite** - `resumeRewriter` tightens bullets, leads with action verbs, fixes grammar and keyword alignment
-   using only vocabulary already present in the source. A change log records every edit.
-5. **Score** - `atsScorer` scores both resumes for keywords, structure and formatting so you can see the delta.
-   `jobMatchScorer` adds a weighted Job Match % over five components, and `swotAnalyzer` derives a four-quadrant
-   SWOT from the same two passes so the narrative cannot contradict the numbers.
+   using only vocabulary already present in the source, promotes skills that the experience already proves, and
+   applies a synonym swap only when it measurably increases keyword coverage. A change log records every edit.
+5. **Score** - `atsScorer` scores each resume independently for keywords, structure and formatting so you can see
+   the delta, and marks any component that cannot move with the reason. `jobMatchScorer` adds a weighted Job Match %
+   over five components, and `swotAnalyzer` derives a four-quadrant SWOT from the same two passes so the narrative
+   cannot contradict the numbers.
 6. **Report** - `reportBuilder` assembles one analysis model and serialises it to PDF, HTML, Markdown and JSON,
    so every format states the same scores. `reportExporter` writes them straight to your device.
 7. **Preview and export** - the same `ResumeRenderer` output is used for the on-screen A4 page, the visual PDF

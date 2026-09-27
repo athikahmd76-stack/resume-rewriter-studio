@@ -188,6 +188,19 @@ export const exportReportPdf = async (report, options = {}) => {
       y += 5;
       line(MARGIN, y, PAGE_W - MARGIN, y, [241, 245, 249], 0.5);
       y += 12;
+
+      // A component that did not move gets its reason printed under the row, so
+      // the report never leaves a zero looking like the rewrite did nothing.
+      if (c.delta === 0 && c.lockedReason) {
+        const tag = c.movable === 'conditional' ? 'EVIDENCE-LIMITED' : 'LOCKED';
+        const reason = pdf.splitTextToSize(c.lockedReason, W - 8);
+        ensure(reason.length * 9 + 12);
+        setFont('bold', 7, MUTED);
+        pdf.text(tag, MARGIN, y);
+        setFont('normal', 7.5, MUTED);
+        reason.forEach((l, li) => { pdf.text(l, MARGIN + 6, y + li * 9); });
+        y += reason.length * 9 + 8;
+      }
     });
     y += 8;
   };

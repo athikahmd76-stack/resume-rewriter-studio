@@ -141,7 +141,15 @@ export const scoreJobMatch = (resume, jd, match, options = {}) => {
   const components = [
     { id: 'keywordCoverage', label: 'Keyword Coverage', value: keywordCoverage, weight: WEIGHTS.keywordCoverage, hint: 'Weighted share of the keywords this job asks for that your resume actually contains.' },
     { id: 'requiredSkills', label: 'Required Skills', value: requiredSkills, weight: WEIGHTS.requiredSkills, hint: 'Must-have skills listed in the posting, found in your resume.' },
-    { id: 'roleAlignment', label: 'Role Alignment', value: roleAlignment, weight: WEIGHTS.roleAlignment, hint: 'How closely your held job titles match the role you are applying for.' },
+    {
+      id: 'roleAlignment',
+      label: 'Role Alignment',
+      value: roleAlignment,
+      weight: WEIGHTS.roleAlignment,
+      hint: 'How closely your held job titles match the role you are applying for.',
+      movable: false,
+      lockedReason: 'Measured against the job titles you actually held. Raising it would mean claiming a title you did not hold, so it moves only when your real titles match the posting.',
+    },
     { id: 'jdLanguage', label: 'Job Description Language', value: jdLanguage, weight: WEIGHTS.jdLanguage, hint: "The posting's own terminology appearing in your resume." },
     { id: 'evidenceStrength', label: 'Evidence Strength', value: evidenceStrength, weight: WEIGHTS.evidenceStrength, hint: 'Quantified achievements, section completeness and skills breadth.' },
   ];
