@@ -73,7 +73,14 @@ export const resumeToText = (resume) => {
     parts.push(e.role, e.company, e.location, e.dates, e.notes);
     parts.push(...(e.responsibilities || []), ...(e.achievements || []));
   }
-  for (const ed of resume.education || []) parts.push(...(ed.parts || []), ed.institution, ed.degree, ed.dates, ed.details);
+  // `parts` holds the raw line the parser read, and for education and
+  // certifications that line already contains the institution/degree/dates text
+  // also held in the structured fields. Pushing both made every entry count
+  // twice, so a keyword written once in a degree scored as mentioned twice and
+  // the flat text read as if the entry were repeated.
+  for (const ed of resume.education || []) {
+    parts.push(...(ed.parts || []), ed.institution, ed.degree, ed.dates, ed.details);
+  }
   parts.push(...(resume.skills || []).flatMap((s) => (s.items ? [s.label, ...s.items] : [s])));
   for (const c of resume.certifications || []) parts.push(...(c.parts || []), c.name, c.issuer, c.year, c.detail);
   for (const pr of resume.projects || []) parts.push(pr.name, pr.role, pr.dates, pr.detail, ...(pr.bullets || []));
@@ -85,7 +92,16 @@ export const resumeToText = (resume) => {
   for (const a of resume.achievements || []) parts.push(a?.text || a, ...((a?.parts || []).filter((p) => p !== a?.text)));
   for (const l of resume.languages || []) parts.push(l?.text || l, ...((l?.parts || []).filter((p) => p !== l?.text)));
   for (const o of resume.other || []) parts.push(o?.text || o, ...((o?.parts || []).filter((p) => p !== o?.text)));
-  return parts.filter(Boolean).join('\n');
+  // Drop repeated lines. The same text is genuinely held twice in the model
+  // (a parsed raw line plus the field it was parsed into), and keyword matching
+  // counts occurrences, so a line left in twice read as evidence the candidate
+  // had mentioned it twice.
+  const seen = new Set();
+  return parts
+    .filter(Boolean)
+    .map((x) => String(x).trim())
+    .filter((x) => (seen.has(x.toLowerCase()) ? false : (seen.add(x.toLowerCase()), true)))
+    .join('\n');
 };
 
 /** Experience bullets in document order (responsibilities + achievements). */

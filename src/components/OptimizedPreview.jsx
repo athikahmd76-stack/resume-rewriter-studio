@@ -75,7 +75,7 @@ const OptimizedPreview = memo(function OptimizedPreview({
         Rendered from structured data using the detected A4 page geometry
         {' '}
         ({A4.widthMm} &times; {A4.heightMm} mm reference)
-        {changeLog?.length ? ` \u00b7 ${changeLog.length} recorded change${changeLog.length > 1 ? 's' : ''}` : ''}
+        {changeLog?.length ? ` \u00b7 ${changeLog.filter((c) => !c.advice).length} applied change${changeLog.filter((c) => !c.advice).length === 1 ? '' : 's'}` : ''}
         . Headings are kept with their content, experience entries are kept together where they fit, and metric-bearing
         bullets are surfaced first.
       </p>

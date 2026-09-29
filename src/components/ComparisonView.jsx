@@ -162,7 +162,14 @@ const ComparisonView = memo(function ComparisonView({ comparison, changeLog, loa
             <span className="card__icon" aria-hidden="true"><Columns2 size={15} /></span>
             <div className="grow">
               <h3 className="card__title">Change log ({changeLog.length})</h3>
-              <p className="card__hint">Every transformation the local engine applied, in order.</p>
+              <p className="card__hint">
+                {(() => {
+                  const edits = changeLog.filter((c) => !c.advice).length;
+                  const notes = changeLog.length - edits;
+                  if (!notes) return 'Every transformation the local engine applied, in order.';
+                  return `${edits} change${edits === 1 ? '' : 's'} applied, plus ${notes} note${notes === 1 ? '' : 's'} on what was deliberately left alone.`;
+                })()}
+              </p>
             </div>
           </summary>
           <div className="card__body" style={{ paddingTop: 8 }}>

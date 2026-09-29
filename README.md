@@ -193,6 +193,35 @@ way through and surfaced as "The rewrite could not be completed" - you lost the 
 metric lookup is now guarded, so an awkward bullet is left as it is and the rest of the rewrite finishes. That
 failure is covered by a regression test built from em dashes placed exactly where the old parser broke.
 
+**A rewrite may sharpen your language but it may not enlarge your claims.** A verb carries a scope: "Supported",
+"Produced" and "Managed" are not interchangeable, and swapping the last one in for the first would put words in your
+mouth about managing people or a budget that you never wrote. Each weak-phrasing rule now declares the claim level of
+the phrasing it matches, and the rewriter only applies it when the replacement verb sits on the same rung. So "Handled
+stock reconciliation" and "Took care of the weekly reporting pack" are left exactly as you wrote them, and the change
+log says so and explains why - a note, not a silent edit. A rule that would only change a capital letter is not counted
+as an improvement at all, so the number of reported changes is the number of real ones.
+
+**Nothing unreadable is promoted into your skills list.** Skills are only hoisted into the list when your experience
+already states them, and the pass is strict about what counts as stated. Group headings such as "Professional" are not
+skills. Your own job title is not a skill. Neither is half of a product name: a posting that says "SAP S/4HANA" is no
+longer split on the slash into the nonsense requirements "sap s" and "4hana". Whatever is deliberately left out is
+listed in the change log with the reason.
+
+**A credential spelled out is the same credential as its acronym.** "CSCP" and "Certified Supply Chain Professional"
+are the same qualification, and a posting asking for the acronym against a resume that writes it out used to be shown
+as a gap the rewrite could never close. These pairs are exact expansions only, and they affect *recognition* alone: the
+abbreviation is never written into your document, because a credential your resume does not name is a fact the app will
+not manufacture.
+
+**A job header is not repeated down the page.** The parser re-reads a job heading as it grows and once more to settle it.
+It used to file the lines it had already claimed under the entry's notes as well, so every job carried its own header
+repeated about ten times in the searchable text. Notes are now de-duplicated across passes and pruned once the heading
+is settled, and each entry keeps exactly one location.
+
+**Keyword counting no longer double-counts you.** A degree is held twice in the model - the raw line the parser read
+and the fields it was split into - and the flattened text used to include both, so a term written once in a degree
+scored as if you had mentioned it twice. Repeated lines are dropped before matching.
+
 A resume that is already clean and well-matched can legitimately show a delta of zero. The app will tell you that
 was the reason rather than leaving you to guess.
 
@@ -202,7 +231,8 @@ and threats are requirements with no evidence in the source. Every finding names
 tab states plainly that it is a local estimate rather than an employer's ATS verdict.
 
 **The report** is assembled by one serialiser, so all four formats carry identical numbers - the PDF, HTML,
-Markdown and JSON files cannot disagree with each other or with the screen.
+Markdown and JSON files cannot disagree with each other or with the screen. The change log is carried through the same
+path, so an exported report lists what actually changed rather than a row of empty labels.
 
 ---
 
@@ -405,6 +435,13 @@ the real upload/export regression.
 headers, marker-less bullets, wrapped bullet lines, "ADDITIONAL" sub-headings inside a section, repeated section
 headings, and sections that must not bleed into each other. Add a case to `scripts/fixtures/layouts.mjs` when a real
 resume parses wrong.
+
+The headless pipeline checks carry a regression for every honesty rule described above, because each one was a real
+defect: an unparseable bullet that used to fail the whole run, a differently-worded posting term that used to score as
+absent, advert noise that used to appear in your gap list, a change log that used to report edits it never made, a
+skills list that used to accept a job title and half a product name, a verb rule that used to claim you managed a team,
+a job header that used to repeat itself down the page, a credential acronym that used to read as a missing skill, and
+a term written once in a degree that used to count as evidence you mentioned it twice.
 
 `npm run test:browser`, `npm run test:parser` and `npm run test:upload` use Playwright with your **installed**
 Chrome or Edge - no browser is downloaded.

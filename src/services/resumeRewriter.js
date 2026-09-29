@@ -26,7 +26,7 @@
  * and the user can revert any single change.
  */
 
-import { WEAK_PHRASE_MAP, STRONG_VERB_SET, ACHIEVEMENT_VERBS } from '../data/actionVerbs.js';
+import { WEAK_PHRASE_MAP, OVERSTATED_UPGRADES, verbScope, STRONG_VERB_SET, ACHIEVEMENT_VERBS } from '../data/actionVerbs.js';
 import {
   collapseWhitespace, similarity, capitalizeFirst, endWithPeriod, countWords,
 } from '../utils/textUtils.js';
@@ -135,21 +135,49 @@ const fixCommonTypos = (text) =>
 const applyGrammar = (input, settings, log, location) => {
   let text = String(input || '');
   const before = text;
+  const keptVerbs = [];
 
   if (settings.improveActionVerbs) {
-    for (const { pattern, verb } of WEAK_PHRASE_MAP) {
+    for (const { pattern, verb, scope } of WEAK_PHRASE_MAP) {
       const re = new RegExp(pattern.source, pattern.flags.replace('g', '') + 'g');
       const hits = text.match(re);
       if (!hits || !hits.length) continue;
+      // A rewrite may sharpen the language but never inflate the claim. If the
+      // replacement verb sits higher on the claim ladder than the phrasing it
+      // replaces, the sentence would end up saying something the candidate did
+      // not write, so the bullet is left exactly as it is and the reason is
+      // reported instead.
+      if (scope && verbScope(verb) && verbScope(verb) !== scope) continue;
       re.lastIndex = 0;
-      text = text.replace(re, (hit) => {
-        // preserve capitalisation of the original first letter
-        if (hit[0] === hit[0].toUpperCase() && /^[A-Z]/.test(hit[0])) return verb;
-        return verb.charAt(0).toLowerCase() + verb.slice(1);
-      });
       const from = hits[0].trim();
-      const to = /^[A-Z]/.test(from) ? verb : verb.charAt(0).toLowerCase() + verb.slice(1);
-      RECORD(log, { type: 'action-verb', location, from, to, label: `"${from}" -> "${to}"` });
+      const replacement = from[0] === from[0].toUpperCase() && /^[A-Z]/.test(from)
+        ? verb
+        : verb.charAt(0).toLowerCase() + verb.slice(1);
+      // A rule that maps a word to itself is a casing tidy-up, not a
+      // improvement. Logging it inflated the change count and told the user
+      // something had been fixed when the sentence was untouched.
+      if (replacement === from) continue;
+      text = text.replace(re, (hit) => (hit[0] === hit[0].toUpperCase() && /^[A-Z]/.test(hit[0])
+        ? verb
+        : verb.charAt(0).toLowerCase() + verb.slice(1)));
+      RECORD(log, { type: 'action-verb', location, from, to: replacement, label: `"${from}" -> "${replacement}"` });
+    }
+    for (const { pattern, phrase, keep, reason } of OVERSTATED_UPGRADES) {
+      const re = new RegExp(pattern.source, pattern.flags.replace('g', ''));
+      if (!re.test(text)) continue;
+      const already = keptVerbs.find((k) => k.phrase === phrase);
+      if (already) continue;
+      keptVerbs.push({ phrase, keep, reason });
+    }
+    if (keptVerbs.length) {
+      RECORD(log, {
+        type: 'verb-held',
+        advice: true,
+        location,
+        from: '',
+        to: '',
+        label: `Left these words alone because strengthening them would overstate your role: ${keptVerbs.map((k) => `"${k.phrase}" (${k.reason})`).join('; ')}`,
+      });
     }
   }
 
@@ -472,7 +500,7 @@ const rewriteBullet = ({ text, settings, insertable, tense, log, location }) => 
 
   // 6. sentence shape: must start with a verb-ish word
   if (settings.improveActionVerbs && !firstWordIsVerb(out) && countWords(out) > 3) {
-    RECORD(log, { type: 'passive', location, from: text, to: out, label: 'Reviewed - bullet may not start with a verb' });
+    RECORD(log, { type: 'passive', advice: true, location, from: text, to: out, label: 'Reviewed - bullet may not start with a verb' });
   }
 
   return out;
@@ -633,10 +661,39 @@ const promoteProvenSkills = ({ resume, skills, match, settings, log }) => {
   const groups = skills.map((g) => ({ ...g, items: [...g.items] }));
   if (!groups.length) return skills;
 
+  // Headings count as already listed. "Supply chain" is a group title in its own
+  // right, and repeating it as an item underneath just reads as padding.
   const listed = new Set(
-    groups.flatMap((g) => g.items).map((i) => normalizeKeyword(i)).filter(Boolean),
+    groups.flatMap((g) => [g.label, g.heading, g.title, ...g.items])
+      .map((i) => normalizeKeyword(i)).filter(Boolean),
   );
-  const bodyText = `${resume.summary || ''}\n${(resume.experience || []).flatMap((e) => [e.role, e.company, ...experienceBullets(e)].filter(Boolean)).join(' \n ')}\n${(resume.projects || []).flatMap((p) => p.bullets || []).join(' \n ')}`;
+  // Certifications are evidence too. A posting asking for "CSCP certification" is
+  // answered by the candidate who already lists the certificate, and that fact
+  // is worth surfacing where recruiters look rather than hiding in a section the
+  // keyword check never read.
+  const certText = (resume.certifications || [])
+    .flatMap((c) => [c.name, c.issuer, c.detail].filter(Boolean)).join(' ');
+  const bodyText = `${resume.summary || ''}\n${(resume.experience || []).flatMap((e) => [e.role, e.company, ...experienceBullets(e)].filter(Boolean)).join(' \n ')}\n${(resume.projects || []).flatMap((p) => p.bullets || []).join(' \n ')}\n${certText}`;
+
+  // A skills list is a list of competencies, not of job titles. Promoting the
+  // role the candidate already holds adds nothing - it is on the document twice
+  // already - so the role wording itself is excluded. The test is an exact match
+  // on the role and nothing looser: "logistics" sits inside the company name
+  // "Brightpath Logistics" and inside the domain of "Supply Chain Graduate", and
+  // both are real skills, not titles the candidate is claiming.
+  const rolePhrases = (resume.experience || [])
+    .map((e) => normalizeKeyword(e.role || ''))
+    .filter(Boolean);
+  const isJobTitle = (key) => rolePhrases.includes(key);
+
+  // A term that is only a fragment of a longer single token in the resume is a
+  // parse artefact rather than a competency. "SAP S/4HANA" is one token, so its
+  // halves "sap s" and "4hana" are pieces of one product name, not two skills.
+  const longTokens = collapseWhitespace(bodyText.toLowerCase())
+    .split(/[^a-z0-9+#/]+/)
+    .filter(Boolean);
+  const isFragment = (key) => longTokens.some((tok) => tok.length > key.length
+    && (tok.startsWith(key) || tok.endsWith(key)));
 
   // Only terms the matcher already vouched for, most wanted first.
   const candidates = (match.matched || [])
@@ -646,12 +703,15 @@ const promoteProvenSkills = ({ resume, skills, match, settings, log }) => {
 
   const target = groups[groups.length - 1];
   const promoted = [];
+  const skipped = [];
   for (const m of candidates) {
     const term = m.display || m.term;
     const key = normalizeKeyword(term);
     if (!key || key.length < 2 || key.length > 40) continue;
     if (listed.has(key)) continue;
-    if (!textMentionsTerm(bodyText, term)) continue; // must be proven somewhere
+    if (!textMentionsTerm(bodyText, term)) { skipped.push(`${term} (not in your experience)`); continue; }
+    if (isJobTitle(key)) { skipped.push(`${term} (a job title, not a skill)`); continue; }
+    if (isFragment(key)) { skipped.push(`${term} (part of a longer term)`); continue; }
     listed.add(key);
     target.items.push(term);
     promoted.push(term);
@@ -664,6 +724,19 @@ const promoteProvenSkills = ({ resume, skills, match, settings, log }) => {
       from: target.items.slice(0, target.items.length - promoted.length).join(', '),
       to: target.items.join(', '),
       label: `Moved ${promoted.length} skill(s) you already demonstrate in your experience into the skills list: ${promoted.join(', ')}`,
+    });
+  }
+  if (skipped.length) {
+    // Saying what was held back is the difference between "nothing was added"
+    // and "everything was considered". These are the entries a naive promote
+    // would have put in the list.
+    RECORD(log, {
+      type: 'skills-skipped',
+      advice: true,
+      location: 'skills',
+      from: '',
+      to: '',
+      label: `Left out of the skills list on purpose: ${skipped.join(', ')}`,
     });
   }
   return groups;

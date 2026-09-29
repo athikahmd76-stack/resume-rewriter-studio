@@ -95,7 +95,11 @@ const candidatesFromLine = (line) => {
     .replace(/^[\s•\-*•\u2022\d.)\]]+/, '')
     .replace(/\b(we|you|our|the|will|would|should|must|can|is|are|have|has|with|for|and|or|in|on|of|to|a|an)\b/gi, ' ')
     .replace(/[.;:]+$/, '');
-  const parts = text.split(/\s*[,;|/]\s*|\s{2,}|\s+(?:and|or)\s+/i).map((p) => p.trim()).filter(Boolean);
+  // A slash only separates clauses when it is spaced. An unspaced slash is part
+  // of the term itself, and splitting on it turned "SAP S/4HANA" into the
+  // requirements "sap s" and "4hana" - nonsense that then got promoted into the
+  // candidate's skills list and reported back as a gap they could not close.
+  const parts = text.split(/\s*[,;]\s*|\s+\/\s+|\s{2,}|\s+(?:and|or)\s+/i).map((p) => p.trim()).filter(Boolean);
   const out = [];
   for (const part of parts) {
     const grams = extractNgrams(part, { maxN: 3, limit: 6 });

@@ -179,7 +179,12 @@ export const buildReport = ({ result, jobMatch, swot, context = {} } = {}) => {
       }
       : null,
     changeLog: (result.changeLog || []).slice(0, 60).map((c) => ({
-      kind: c.kind || 'edit', section: c.section || '', detail: c.detail || c.text || '',
+      // The engine emits { type, location, label, advice }; the reports have
+      // always been keyed on { kind, section, detail }, which is why every
+      // exported report used to list "[edit]" with nothing after it.
+      kind: c.advice ? 'note' : (c.kind || c.type || 'edit'),
+      section: c.section || c.location || '',
+      detail: c.detail || c.label || c.text || '',
     })),
     layout: result.layout
       ? {

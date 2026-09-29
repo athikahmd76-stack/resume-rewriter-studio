@@ -1,5 +1,5 @@
 import { STOP_WORDS, NON_KEYWORD_TERMS, WEAK_VERBS } from '../data/stopWords.js';
-import { SOFT_SKILL_TERMS, getSynonyms } from '../data/synonymDictionary.js';
+import { SOFT_SKILL_TERMS, getSynonyms, KNOWN_CERTIFICATION_HINTS } from '../data/synonymDictionary.js';
 import { collapseWhitespace, uniqueBy, softNormalize, pluralize, singularize } from './textUtils.js';
 
 /** Normalise a keyword for comparison (lowercase, trimmed, whitespace collapsed). */
@@ -115,6 +115,8 @@ export const findSynonymMatches = (resumeText, term) => {
   for (const syn of getSynonymsDeep(term)) {
     if (textMentionsTerm(resumeText, syn)) found.push(syn);
   }
+  const expansion = expandsTo(term);
+  if (expansion && textMentionsTerm(resumeText, expansion)) found.push(expansion);
   return found;
 };
 
@@ -172,10 +174,53 @@ export const coversTerm = (text, term) => (
  */
 export const KEYWORD_EVIDENCE_REASON = 'This counts the job keywords your resume already states, plus keywords the posting words differently where they mean the same thing. Anything else the job asks for and your resume does not evidence is listed as missing and left out of the document, so this stops where your real experience stops.';
 
-/** Expand a term into itself + its dictionary synonyms. */
+/**
+ * Expand a term into itself + its dictionary synonyms.
+ */
 export const expandTerm = (term) => {
   const base = normalizeKeyword(term);
   return uniqueBy([base, ...getSynonyms(term)].map(normalizeKeyword), (t) => t);
+};
+
+/**
+ * Certification acronyms and the full name each one actually stands for.
+ *
+ * "CSCP" is not a different qualification from "Certified Supply Chain
+ * Professional" - it is the same letters. A posting that asks for the acronym
+ * and a resume that spells it out were previously reported as a gap purely
+ * because the reader has to know the abbreviation, and the rewrite could not
+ * close it because the substitution map will not add a credential the document
+ * does not already name.
+ *
+ * These pairs are deliberately exact expansions only. They are never treated as
+ * synonyms for scoring the candidate's experience, and nothing here is ever
+ * written into the document: the rewriter is still not allowed to add a
+ * qualification, and the gap list still only shrinks where the resume genuinely
+ * names the credential.
+ */
+const CREDENTIAL_QUALIFIERS = /\s+(certification|certified|qualification|certificate|accreditation|accredited|award|level|course|training)$/;
+
+/** Strip a trailing credential qualifier: "cscp certification" -> "cscp". */
+const stripCredentialQualifier = (term) => term.replace(CREDENTIAL_QUALIFIERS, '');
+
+export const expandsTo = (term) => {
+  const key = normalizeKeyword(term);
+  if (!key) return null;
+  for (const candidate of [key, stripCredentialQualifier(key)]) {
+    if (!candidate) continue;
+    for (const [acro, full] of KNOWN_CERTIFICATION_HINTS) {
+      if (candidate === normalizeKeyword(acro)) return normalizeKeyword(full);
+      if (candidate === normalizeKeyword(full)) return normalizeKeyword(acro);
+    }
+  }
+  return null;
+};
+
+/** Does the text name this certification, by acronym or by its full title? */
+export const textMentionsCertification = (text, term) => {
+  if (textMentionsTerm(text, term)) return true;
+  const other = expandsTo(term);
+  return Boolean(other) && textMentionsTerm(text, other);
 };
 
 export const isSoftSkill = (term) => SOFT_SKILL_TERMS.has(normalizeKeyword(term));
@@ -203,6 +248,8 @@ export default {
   countTermMentions,
   findSynonymMatches,
   expandTerm,
+  expandsTo,
+  textMentionsCertification,
   isSoftSkill,
   keywordWeight,
 };

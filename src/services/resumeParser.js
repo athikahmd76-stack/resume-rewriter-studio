@@ -472,9 +472,21 @@ const finalizeHeader = (entry, settle = false) => {
 
   const notes = [];
   const used = new Set();
+  // This runs again every time the header grows, and once more to settle, so a
+  // segment that has already been claimed as the role, company or location must
+  // stay claimed. Without this the leftover pass below re-reads the very same
+  // header on the next call and files all three segments under `notes`, which
+  // produced a header string repeated ten times over on every job entry.
+  const loose = (s) => collapseWhitespace(String(s || '')).toLowerCase();
+  const sameAs = (a, b) => Boolean(a) && Boolean(b) && loose(a) === loose(b);
   segments.forEach((seg, idx) => {
     if (WORK_TYPE_RE.test(seg)) { notes.push(seg); used.add(idx); return; }
-    if (!entry.location && looksLikeLocation(seg)) { entry.location = seg; used.add(idx); }
+    if (!entry.location && looksLikeLocation(seg)) { entry.location = seg; used.add(idx); return; }
+    // A segment already claimed as the role, company or location is consumed for
+    // good. Nothing else is marked here on purpose: a segment left free is still
+    // available to the positional guess below and to the final settle pass, which
+    // is what fills in a header whose role token the heuristics did not recognise.
+    if (sameAs(seg, entry.location) || sameAs(seg, entry.role) || sameAs(seg, entry.company)) used.add(idx);
   });
 
   if (!entry.role) {
@@ -496,6 +508,15 @@ const finalizeHeader = (entry, settle = false) => {
       const idx = segments.findIndex((s, i) => !used.has(i) && s !== entry.role);
       if (idx >= 0) { entry.company = segments[idx]; used.add(idx); }
     }
+    // Now the role and company are known for certain, so a note that repeats one
+    // of them is pure duplication in the rendered document.
+    if (entry.notes) {
+      const claimed = [entry.role, entry.company, entry.location].filter(Boolean).map(loose);
+      const kept = entry.notes.split(',').map((n) => n.trim()).filter(Boolean)
+        .filter((n) => !claimed.includes(loose(n)));
+      if (kept.length) entry.notes = kept.join(', ');
+      else delete entry.notes;
+    }
   }
 
   // Anything left over is still text from the document, so keep it rather than
@@ -506,7 +527,17 @@ const finalizeHeader = (entry, settle = false) => {
     if (prevIsLocation) entry.location = `${entry.location}, ${seg}`;
     else notes.push(seg);
   });
-  if (notes.length) entry.notes = entry.notes ? `${entry.notes}, ${notes.join(', ')}` : notes.join(', ');
+  // A header that spans several lines repeats nothing, and two header lines can
+  // legitimately carry the same region, so collapse duplicates - including ones
+  // a previous call already stored - before appending.
+  const seen = new Set(String(entry.notes || '').split(',').map(loose).filter(Boolean));
+  const uniqueNotes = notes.filter((n) => {
+    const key = loose(n);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (uniqueNotes.length) entry.notes = entry.notes ? `${entry.notes}, ${uniqueNotes.join(', ')}` : uniqueNotes.join(', ');
 };
 
 const parseExperience = (lines) => {
@@ -525,7 +556,11 @@ const parseExperience = (lines) => {
     lastBulletList = null;
   };
   const addHeaderLine = (line, text) => {
-    current.rawLines.push(line);
+    // startEntry() already seeds rawLines with this line, so pushing it again
+    // duplicated the whole header block in the entry's source lines. Identity,
+    // not id: ids are not unique enough to compare two lines for sameness.
+    const last = current.rawLines[current.rawLines.length - 1];
+    if (last !== line) current.rawLines.push(line);
     current.headerTexts.push(text);
     finalizeHeader(current);
   };

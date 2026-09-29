@@ -488,5 +488,144 @@ console.log('\n19. a job advert never contributes its own noise to the gap list'
   check('filler is trimmed off the real terms', !missing.some((t) => /^(build|using|highly|partners?) /i.test(t)), missing.join(' | ') || 'none missing');
 }
 
+console.log('\n20. the rewrite never reports a change it did not make');
+{
+  // Two rules mapped a word to itself ("managed" -> "Managed") purely to fix the
+  // capital. That produced change entries reading `"Managed" -> "Managed"`, so the
+  // count of improvements was inflated with edits that changed nothing.
+  const edits = out.changeLog.filter((c) => !c.advice);
+  const noop = edits.filter((c) => String(c.from || '').trim() === String(c.to || '').trim());
+  check('no logged change leaves the text identical', noop.length === 0, noop.map((c) => c.label).join(' | ') || `${edits.length} applied changes, none a no-op`);
+  const verbs = edits.filter((c) => c.type === 'action-verb');
+  check('every logged verb change really differs', verbs.every((c) => c.from !== c.to), `${verbs.length} verb change(s)`);
+  // Notes about what was left alone are not edits and must not inflate the count.
+  const holdBack = out.changeLog.filter((c) => ['verb-held', 'skills-skipped', 'passive'].includes(c.type));
+  check('every hold-back note is flagged as advice', holdBack.length > 0 && holdBack.every((c) => c.advice === true), holdBack.map((c) => `${c.type}:${c.advice}`).join(' | '));
+  check('notes are counted separately from applied changes', out.changeLog.filter((c) => !c.advice).every((c) => !['verb-held', 'skills-skipped', 'passive'].includes(c.type)), `${edits.length} applied, ${holdBack.length} noted`);
+  const report = out.report;
+  check('the report carries the change details it used to drop', report.changeLog.length > 0 && report.changeLog.every((c) => c.detail), `${report.changeLog.filter((c) => c.detail).length}/${report.changeLog.length} entries have text`);
+}
+
+console.log('\n21. a rewrite may not inflate what the candidate did');
+{
+  // "Handled" and "Took care of" describe work the candidate did. "Managed"
+  // describes managing people or a budget, which they never said - so the pass
+  // left the word alone and said why. The claim ladder is what enforces this.
+  const r2 = await runPipeline({
+    preparsed: { kind: 'docx', pageCount: 1, text: '', blocks: [
+      { type: 'paragraph', text: 'Data Analyst', fontSize: 20, bold: true, align: 'center' },
+      { type: 'paragraph', text: 'a@b.com', fontSize: 9, align: 'center' },
+      { type: 'paragraph', text: 'Professional Experience', fontSize: 12, bold: true },
+      { type: 'paragraph', text: 'Data Analyst  |  Acme  |  Mar 2021 - Present', fontSize: 10.5, bold: true },
+      { type: 'bullet', text: 'Handled stock reconciliation across 3 warehouses and cleared 96% of variances.', fontSize: 10, bullet: true, marker: '\u2022' },
+      { type: 'bullet', text: 'Took care of the weekly reporting pack for 12 stores.', fontSize: 10, bullet: true, marker: '\u2022' },
+      { type: 'bullet', text: 'Dealt with supplier escalations as they arose.', fontSize: 10, bullet: true, marker: '\u2022' },
+      { type: 'bullet', text: 'Was part of a team of 6 analysts.', fontSize: 10, bullet: true, marker: '\u2022' },
+      { type: 'bullet', text: 'Made savings of GBP 85,000 annually.', fontSize: 10, bullet: true, marker: '\u2022' },
+      { type: 'paragraph', text: 'Skills', fontSize: 12, bold: true },
+      { type: 'paragraph', text: 'Excel' },
+    ] },
+    jobDescription: 'Data Analyst role. Excel required.',
+    targetRole: 'Data Analyst',
+    onProgress: () => {},
+  });
+  const after = resumeToText(r2.optimizedResume);
+  for (const word of ['Handled', 'Took care of', 'Dealt with', 'Part of', 'Made savings']) {
+    check(`"${word}" survives the rewrite`, new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(after), after.match(new RegExp(`^.{0,60}${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.{0,50}$`, 'im'))?.[0]?.trim() || 'not found');
+  }
+  check('"Managed" was never introduced', !/\bmanaged\b/i.test(after), after.match(/^.{0,80}managed.{0,50}$/im)?.[0] || 'none');
+  check('the tool explains why it held them back', r2.changeLog.some((c) => c.type === 'verb-held' && /overstate/i.test(c.label)), r2.changeLog.find((c) => c.type === 'verb-held')?.label?.slice(0, 90) || 'no explanation');
+  check('the guard is clean', r2.guard.blocked.length === 0, r2.guard.blocked.map((b) => b.detail).join('; '));
+}
+
+console.log('\n22. nothing unreadable is promoted into the skills list');
+{
+  // "SAP S/4HANA" is one product name. Splitting the advert on "/" produced the
+  // requirements "sap s" and "4hana", and the promotion pass then copied both
+  // into the candidate's skills list - which is worse than doing nothing.
+  const r2 = await runPipeline({
+    preparsed: { kind: 'docx', pageCount: 1, text: '', blocks: [
+      { type: 'paragraph', text: 'Data Analyst', fontSize: 20, bold: true, align: 'center' },
+      { type: 'paragraph', text: 'a@b.com', fontSize: 9, align: 'center' },
+      { type: 'paragraph', text: 'Professional Summary', fontSize: 12, bold: true },
+      { type: 'paragraph', text: 'Supply Chain Analyst with retail distribution experience.' },
+      { type: 'paragraph', text: 'Professional Experience', fontSize: 12, bold: true },
+      { type: 'paragraph', text: 'Supply Chain Analyst  |  Northwind Retail  |  Mar 2021 - Present', fontSize: 10.5, bold: true },
+      { type: 'bullet', text: 'Ran the implementation of SAP S/4HANA materials management with a team of 6 analysts.', fontSize: 10, bullet: true, marker: '\u2022' },
+      { type: 'bullet', text: 'Built Power BI dashboards for stock availability and supplier management reporting.', fontSize: 10, bullet: true, marker: '\u2022' },
+      { type: 'paragraph', text: 'Skills', fontSize: 12, bold: true },
+      { type: 'paragraph', text: 'Systems: SAP S/4HANA, Power BI' },
+      { type: 'paragraph', text: 'Supply chain: Demand planning' },
+    ] },
+    jobDescription: [
+      'Supply Chain Analyst',
+      '',
+      'About the role',
+      '- Run the SAP S/4HANA implementation for materials management.',
+      '- Supplier management and dashboards experience essential.',
+      '- Python required.',
+    ].join('\n'),
+    targetRole: 'Supply Chain Analyst',
+    onProgress: () => {},
+  });
+  const items = r2.optimizedResume.skills.flatMap((g) => g.items || []).map((i) => String(i).toLowerCase());
+  const labels = r2.optimizedResume.skills.map((g) => String(g.label || '').toLowerCase());
+  check('no half of a product name in the skills', !items.some((i) => i === 'sap s' || i === '4hana' || i === 's/4hana'), items.join(' | '));
+  check('the job title is not promoted as a skill', !items.some((i) => i === 'supply chain analyst'), items.join(' | '));
+  check('a group heading is not repeated as an item', !items.some((i) => labels.includes(i)), items.join(' | '));
+  check('what was promoted is present in the experience', r2.optimizedResume.skills.flatMap((g) => g.items || []).filter((i) => /supplier management|dashboards/i.test(i)).length > 0, items.join(' | '));
+  check('the advert is not split on an unspaced slash', !r2.match.missing.some((k) => /^(sap s|4hana)$/.test(k.term)) && !r2.match.matched.some((k) => /^(sap s|4hana)$/.test(k.term)), `missing: ${r2.match.missing.map((k) => k.term).join(' | ')}`);
+  // The demo advert asks for a term that is the candidate's own job title, which
+  // is the case the hold-back log exists to explain.
+  check('a held-back term is reported with its reason', out.changeLog.some((c) => c.type === 'skills-skipped' && /job title/i.test(c.label)), out.changeLog.find((c) => c.type === 'skills-skipped')?.label?.slice(0, 110) || 'nothing reported');
+}
+
+console.log('\n23. a job header is not repeated down the page');
+{
+  // finalizeHeader runs again every time a header grows, and once more to
+  // settle. It used to re-read the segments it had already claimed and file them
+  // under `notes`, so every job carried its own header repeated ten times.
+  const dupes = out.optimizedResume.experience.filter((e) => {
+    const n = String(e.notes || '');
+    if (!n) return false;
+    const parts = n.split(',').map((p) => p.trim().toLowerCase()).filter(Boolean);
+    return new Set(parts).size !== parts.length;
+  });
+  check('no job entry repeats its own header text', dupes.length === 0, dupes.map((e) => `${e.role}: ${e.notes}`).join(' | ') || `${out.optimizedResume.experience.length} entries checked`);
+  const roles = out.optimizedResume.experience.filter((e) => e.role && e.company);
+  check('every job kept its role and company', roles.length === out.optimizedResume.experience.length, `${roles.length}/${out.optimizedResume.experience.length}`);
+  check('a notes field never repeats the role or company', !out.optimizedResume.experience.some((e) => e.notes && [e.role, e.company].filter(Boolean).some((f) => e.notes.toLowerCase().includes(String(f).toLowerCase()))));
+}
+
+console.log('\n24. a credential written out is the same credential as its acronym');
+{
+  // "CSCP" and "Certified Supply Chain Professional" are the same letters. A
+  // posting asking for the acronym against a resume that spells it out used to
+  // be reported as a gap, which the rewrite could never close, because the
+  // substitution map will not add a qualification the document does not name.
+  const r2 = await runPipeline({
+    preparsed: { kind: 'docx', pageCount: 1, text: '', blocks: [
+      { type: 'paragraph', text: 'Sam Okoye', fontSize: 20, bold: true, align: 'center' },
+      { type: 'paragraph', text: 'sam@okoye.com', fontSize: 9, align: 'center' },
+      { type: 'paragraph', text: 'Professional Experience', fontSize: 12, bold: true },
+      { type: 'paragraph', text: 'Supply Chain Analyst  |  Northwind Retail  |  Mar 2021 - Present', fontSize: 10.5, bold: true },
+      { type: 'bullet', text: 'A Certified Supply Chain Professional who reduced stock ageing by 22% across 12 stores.', fontSize: 10, bullet: true, marker: '\u2022' },
+      { type: 'paragraph', text: 'Skills', fontSize: 12, bold: true },
+      { type: 'paragraph', text: 'Certified Supply Chain Professional' },
+    ] },
+    jobDescription: 'Supply Chain Analyst\n- CSCP certification required.\n- Python required.',
+    targetRole: 'Supply Chain Analyst',
+    onProgress: () => {},
+  });
+  const after = resumeToText(r2.optimizedResume);
+  check('the acronym is not reported as a gap', !r2.match.missing.some((k) => /cscp/i.test(k.term)), r2.match.missing.map((k) => k.term).join(' | '));
+  check('it is recognised as the credential the resume names', r2.match.matched.some((k) => /cscp/i.test(k.term)), r2.match.matched.map((k) => k.term).join(' | ') || 'nothing matched');
+  check('a credential absent from the resume stays a gap', r2.match.missing.some((k) => /python/i.test(k.term)), r2.match.missing.map((k) => k.term).join(' | '));
+  // Recognition must not become insertion: the abbreviation is a fact the
+  // document never states, so it must not appear in the output.
+  check('the abbreviation is not written into the resume', !/\bcscp\b/i.test(after), after.match(/^.{0,60}cscp.{0,40}$/im)?.[0] || 'not present, as required');
+  check('the spelled-out credential survives', /certified supply chain professional/i.test(after));
+}
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}\n`);
 process.exit(failures === 0 ? 0 : 1);
